@@ -15,8 +15,32 @@ on:
 permissions:
   contents: read
 
+env:
+  # Where the bootstrap Ruby that runs bin/package inside the manylinux containers comes
+  # from. Any repository with a released ruby-3.4.7.<target>.no_yjit.tar.gz will do; switch
+  # this to your own once it has one.
+  BOOTSTRAP_REPO: jdx/ruby
+  BOOTSTRAP_VERSION: "3.4.7"
+
 jobs:
+  # What this version's series allows: old series build for Linux only, and get a smoke
+  # test their stdlib can pass. See recipes/series.yml.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      macos: ${{ steps.info.outputs.macos }}
+      legacy: ${{ steps.info.outputs.legacy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+      - id: info
+        run: bin/recipe-info "${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+
   build-macos:
+    needs: plan
+    if: needs.plan.outputs.macos == 'true'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,13 +69,14 @@ jobs:
 
       - name: Test portable Ruby
         run: |
-          mkdir -p jdx-ruby
-          tar --strip-components 1 -C jdx-ruby -xf rubies/*.tar.gz
-          export PATH="${PWD}/jdx-ruby/bin:${PATH}"
+          mkdir -p portable-ruby
+          tar --strip-components 1 -C portable-ruby -xf rubies/*.tar.gz
+          export PATH="${PWD}/portable-ruby/bin:${PATH}"
           ruby --version --yjit
           ruby -r debug -r bigdecimal -r json -r yaml -r reline -e "true"
 
   build-linux:
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
@@ -89,7 +114,6 @@ jobs:
           TARGET: ${{ matrix.target }}
           YJIT: ${{ matrix.yjit }}
           CONTAINER: ${{ steps.target.outputs.container }}
-          BOOTSTRAP_VERSION: "3.4.7"
         run: |
           set -euxo pipefail
           docker pull "$CONTAINER"
@@ -98,6 +122,7 @@ jobs:
             -e TARGET \
             -e YJIT \
             -e BOOTSTRAP_VERSION \
+            -e BOOTSTRAP_REPO \
             -v "$PWD:/work" \
             -w /work \
             "$CONTAINER" \
@@ -113,7 +138,7 @@ jobs:
                   arm64_linux) bootstrap_platform="arm64_linux" ;;
                   *) echo "unknown target: $TARGET" >&2; exit 1 ;;
                 esac
-                bootstrap_url="https://github.com/jdx/ruby/releases/download/${bootstrap_version}/ruby-${bootstrap_version}.${bootstrap_platform}.no_yjit.tar.gz"
+                bootstrap_url="https://github.com/${BOOTSTRAP_REPO}/releases/download/${bootstrap_version}/ruby-${bootstrap_version}.${bootstrap_platform}.no_yjit.tar.gz"
                 rm -rf "$bootstrap_root"
                 mkdir -p "$bootstrap_root"
                 curl -fL --retry 3 -o /tmp/bootstrap-ruby.tar.gz "$bootstrap_url"
@@ -141,13 +166,21 @@ jobs:
           path: rubies/
 
       - name: Test portable Ruby
+        env:
+          LEGACY: ${{ needs.plan.outputs.legacy }}
         run: |
-          mkdir -p jdx-ruby
-          tar --strip-components 1 -C jdx-ruby -xf rubies/*.tar.gz
-          export PATH="${PWD}/jdx-ruby/bin:${PATH}"
-          if [[ "${{ matrix.yjit }}" == "true" ]]; then
+          mkdir -p portable-ruby
+          tar --strip-components 1 -C portable-ruby -xf rubies/*.tar.gz
+          export PATH="${PWD}/portable-ruby/bin:${PATH}"
+          if [[ "${{ matrix.yjit }}" == "true" && "$LEGACY" != "true" ]]; then
             ruby --version --yjit
           else
             ruby --version
           fi
-          ruby -r debug -r bigdecimal -r json -r yaml -r reline -e "true"
+          if [[ "$LEGACY" == "true" ]]; then
+            # No reline before 2.7, no json before 1.9, and -r debug on 3.0 or older starts
+            # the interactive debugger. bin/package already ran the real test suite.
+            ruby -r openssl -r yaml -r zlib -r bigdecimal -e "true"
+          else
+            ruby -r debug -r bigdecimal -r json -r yaml -r reline -e "true"
+          fi

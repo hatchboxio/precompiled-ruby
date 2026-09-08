@@ -26,7 +26,10 @@ esac
 
 # Same bootstrap the workflow uses: a released portable Ruby, so the container needs no
 # system Ruby at all. Pin it here rather than reading the workflow; keep the two in step.
+# BOOTSTRAP_REPO can point at any repository with that release, this one included once it
+# has released 3.4.7.
 bootstrap_version=3.4.7
+bootstrap_repo=${BOOTSTRAP_REPO:-jdx/ruby}
 image="precompiled-ruby-build:${target}-${bootstrap_version}"
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
@@ -37,7 +40,7 @@ RUN yum install -y curl tar gzip xz make gcc gcc-c++ perl perl-IPC-Cmd perl-Time
     && yum clean all
 RUN mkdir -p /opt/bootstrap-ruby \\
     && curl -fL --retry 3 -o /tmp/bootstrap-ruby.tar.gz \\
-         "https://github.com/jdx/ruby/releases/download/${bootstrap_version}/ruby-${bootstrap_version}.${target}.no_yjit.tar.gz" \\
+         "https://github.com/${bootstrap_repo}/releases/download/${bootstrap_version}/ruby-${bootstrap_version}.${target}.no_yjit.tar.gz" \\
     && tar -xzf /tmp/bootstrap-ruby.tar.gz -C /opt/bootstrap-ruby --strip-components 1 \\
     && rm /tmp/bootstrap-ruby.tar.gz
 ENV PATH=/opt/bootstrap-ruby/bin:\$PATH

@@ -4,7 +4,7 @@ Tools to build Ruby tarballs that can be installed and run from anywhere on the 
 
 ## How do I use these rubies
 
-Download the appropriate tarball for your platform from the [releases page](https://github.com/jdx/ruby/releases) and extract it to any location.
+Download the appropriate tarball for your platform from the [releases page](https://github.com/hatchboxio/precompiled-ruby/releases) and extract it to any location.
 
 Release artifacts are named:
 
@@ -69,8 +69,28 @@ These Rubies use the first available certificate source in this order:
 
 ## How do I issue a new release
 
-[An automated release workflow is available to use](https://github.com/jdx/ruby/actions/workflows/release.yml).
+[An automated release workflow is available to use](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/release.yml).
 Dispatch the workflow with a Ruby version and it will build, tag, upload SLSA provenance, and publish both the floating release and immutable build revision release.
+
+[Release New Versions](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/release-new.yml)
+dispatches that for every recipe that has no release yet; it runs on a schedule, when
+`recipes/rubies.yml` changes on `main`, or by hand, where its `only` input releases exactly
+the versions you name instead. On a fresh fork the default means every recipe, so the first
+run is a big one; use `only` to start smaller.
+
+Series can opt out of the macOS build with `macos: false` in `recipes/series.yml`; the
+end-of-life series do, and release Linux tarballs only.
+
+No secrets are required. Optional ones:
+
+- `RELEASE_TOKEN`: a personal access token with contents and actions write. Without it the
+  workflows use the built-in token, which works for releasing; the one difference is that
+  pushes made by the autobump workflow don't trigger Release New Versions, so its schedule
+  picks new recipes up instead.
+- `RESEND_API_KEY` and `NOTIFY_EMAIL`: release result emails via Resend.
+
+On a fork, GitHub disables scheduled workflows until they are enabled once in the Actions
+tab.
 
 ## Thanks
 
