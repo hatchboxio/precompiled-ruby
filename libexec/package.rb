@@ -69,6 +69,7 @@ class PortableRubyPackage
 
   def run!
     validate_host!
+    validate_yjit!
     prepare_workspace!
     build_tool_pkgconf!
     build_dependencies!
@@ -105,6 +106,15 @@ class PortableRubyPackage
     left.merge(right) do |_key, old_value, new_value|
       old_value.is_a?(Hash) && new_value.is_a?(Hash) ? deep_merge(old_value, new_value) : new_value
     end
+  end
+
+  # Old series have no YJIT to enable. The release workflow still asks for both variants,
+  # so rather than fail half the matrix, build the same Ruby under the requested name.
+  def validate_yjit!
+    return unless yjit
+    return if @series["yjit"]
+
+    warn "warning: Ruby #{version} predates YJIT; building without it under the --yjit artifact name"
   end
 
   def validate_host!
@@ -268,27 +278,70 @@ class PortableRubyPackage
     end
   end
 
+  # Which OpenSSL a series gets is a recipe decision: Ruby's openssl extension only learned
+  # OpenSSL 3 in 3.1, and only learned 1.1 in 2.4.
+  def openssl_dependency
+    @series.fetch("openssl")
+  end
+
+  def openssl_version
+    Gem::Version.new(@deps.fetch(openssl_dependency).fetch("version"))
+  end
+
+  def legacy_openssl?
+    openssl_version < Gem::Version.new("3")
+  end
+
   def build_openssl
-    source = extract_source("openssl", @deps.fetch("openssl"))
+    source = extract_source("openssl", @deps.fetch(openssl_dependency))
     prefix = dep_prefix("openssl")
     env = dependency_build_env
-    patch_openssl_cert_lookup(source)
-    args = [
-      "--prefix=#{prefix}",
-      "--openssldir=#{File.join(prefix, "libexec", "etc", "openssl")}",
-      "--libdir=#{File.join(prefix, "lib")}",
-      "no-legacy",
-      "no-module",
-      "no-shared",
-      "no-engine",
-      "no-makedepend"
-    ]
+    if legacy_openssl?
+      if macos? && openssl_version < Gem::Version.new("1.1")
+        raise PackageError, "OpenSSL #{openssl_version} has no arm64 macOS target; Ruby #{version} is Linux-only here"
+      end
+      # 1.0.2 and 1.1.1 have no e_os.h and no ossl_safe_getenv, so the certificate lookup
+      # patch does not apply. bundle_certificates compensates from the Ruby side instead.
+      args = [
+        "--prefix=#{prefix}",
+        "--openssldir=#{File.join(prefix, "libexec", "etc", "openssl")}",
+        "--libdir=lib",
+        "no-shared",
+        "no-ssl2",
+        "no-ssl3",
+        "-fPIC"
+      ]
+      if openssl_version < Gem::Version.new("1.1")
+        # 1.0.2: no-comp leaves out a header err_all.c still includes, the Makefiles are
+        # not parallel-safe, and its aarch64 assembly carries relocations a shared object
+        # can't have ("dangerous relocation" linking Ruby's digest extensions), so no-asm.
+        args << "no-asm"
+        install_target = "install_sw"
+        env = env.merge("MAKEFLAGS" => "-j1")
+      else
+        args << "no-comp"
+        install_target = "install_dev"
+      end
+    else
+      patch_openssl_cert_lookup(source)
+      args = [
+        "--prefix=#{prefix}",
+        "--openssldir=#{File.join(prefix, "libexec", "etc", "openssl")}",
+        "--libdir=#{File.join(prefix, "lib")}",
+        "no-legacy",
+        "no-module",
+        "no-shared",
+        "no-engine",
+        "no-makedepend"
+      ]
+      install_target = "install_dev"
+    end
     args += openssl_arch_args
     run "perl", "./Configure", *args, cwd: source, env: env
     make source, env: env
-    make source, "install_dev", env: env
+    make source, install_target, env: env
     libcrypto_pc = File.join(prefix, "lib", "pkgconfig", "libcrypto.pc")
-    inreplace(libcrypto_pc, "\nLibs.private:", "")
+    inreplace(libcrypto_pc, "\nLibs.private:", "") if File.read(libcrypto_pc).include?("\nLibs.private:")
     cacert = download("cacert", @deps.fetch("cacert"))
     cert_dir = File.join(prefix, "libexec", "etc", "openssl")
     FileUtils.mkdir_p(cert_dir)
@@ -296,23 +349,132 @@ class PortableRubyPackage
   end
 
   def build_ruby!
-    ensure_rust! if yjit
+    ensure_rust! if yjit && @series["yjit"] == "rust"
     source = extract_source("ruby", @ruby_recipe)
-    stage_bundled_gems(source)
+    apply_source_patches(source)
+    remove_extensions(source) if package_version < Gem::Version.new("1.9")
+    freshen_config_guess(source) if @series["freshen_config_guess"]
+    stage_bundled_gems(source) if bundled_gems?
 
     args = ruby_configure_args(source)
     env = ruby_build_env
     run "./configure", *args, cwd: source, env: env
-    make source, "extract-gems", env: env
+    make source, "extract-gems", env: env if bundled_gems?
     make source, env: env
-    make source, "ruby.pc", env: env
-    make_portable_gems_load_path(source)
-    make source, "install", env: env
+    if bundled_gems?
+      make source, "ruby.pc", env: env
+      make_portable_gems_load_path(source)
+    end
+    make source, @series.fetch("install_target"), env: env
 
+    install_wrapper if @series["load_relative"] == "wrapper"
+    install_rubygems if @series["rubygems"]
+    patch_executables
+    install_bundlers
     patch_executables
     patch_rbconfig
     copy_native_gem_dependencies
     bundle_certificates
+  end
+
+  # The Ruby being packaged, as a comparable version. (ruby_version(ruby) below asks a
+  # Ruby executable for its version; this is the recipe's.)
+  def package_version
+    Gem::Version.new(version.split("-").first)
+  end
+
+  # 1.8 has no --with-out-ext; an extension is left out by not being there. gdbm and dbm
+  # matter: the build container has their libraries, so they would link against them.
+  def remove_extensions(source)
+    Array(@series["extra_out_ext"]).each do |ext|
+      FileUtils.rm_rf(File.join(source, "ext", ext))
+    end
+  end
+
+  def bundled_gems?
+    gems = @series["bundled_gems"]
+    gems.is_a?(Hash) && !gems.empty?
+  end
+
+  # Source patches are named in the series recipe and implemented here, so a recipe can't
+  # smuggle in arbitrary edits and every patch has a place to explain itself.
+  def apply_source_patches(source)
+    Array(@series["patches"]).each do |name|
+      case name
+      when "lex_c99"
+        # https://bugs.ruby-lang.org/issues/1382 — 1.8.7's gperf-generated rb_reserved_word
+        # is declared inline without static, which C99 inline semantics (the default since
+        # GCC 5) turn into an undefined reference at link time.
+        inreplace(File.join(source, "lex.c"), "struct kwtable *\nrb_reserved_word", "static struct kwtable *\nrb_reserved_word")
+      else
+        raise PackageError, "unknown source patch: #{name}"
+      end
+    end
+  end
+
+  # config.guess older than 2012 doesn't know aarch64. Take automake's copy when the build
+  # host has one (the manylinux images do), otherwise GNU's.
+  def freshen_config_guess(source)
+    dir = File.exist?(File.join(source, "tool", "config.guess")) ? File.join(source, "tool") : source
+    local = Dir["/usr/share/automake-*/config.guess"].max
+    %w[config.guess config.sub].each do |name|
+      if local
+        FileUtils.cp(File.join(File.dirname(local), name), File.join(dir, name))
+      else
+        run "curl", "-fsSL", "-o", File.join(dir, name),
+            "https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=#{name};hb=HEAD"
+      end
+      FileUtils.chmod(0o755, File.join(dir, name))
+    end
+  end
+
+  # Ruby 1.8 predates --enable-load-relative. The binary moves to libexec/ and bin/ruby
+  # becomes a shell wrapper that finds the prefix from its own location and hands the
+  # load path over with -I. rbconfig.rb already locates itself relative to the prefix, so
+  # RubyGems and native gem builds follow along.
+  def install_wrapper
+    libexec = File.join(@install_prefix, "libexec")
+    FileUtils.mkdir_p(libexec)
+    FileUtils.mv(ruby_bin, File.join(libexec, "ruby"))
+    arch = capture(File.join(libexec, "ruby"), "-rrbconfig", "-e", "print Config::CONFIG['arch']").strip
+    lib_version = capture(File.join(libexec, "ruby"), "-rrbconfig", "-e", "print Config::CONFIG['ruby_version']").strip
+    load_path = [
+      "site_ruby/#{lib_version}", "site_ruby/#{lib_version}/#{arch}", "site_ruby",
+      "vendor_ruby/#{lib_version}", "vendor_ruby/#{lib_version}/#{arch}", "vendor_ruby",
+      lib_version, "#{lib_version}/#{arch}"
+    ].map { |dir| %(-I "$prefix/lib/ruby/#{dir}") }.join(" \\\n  ")
+    File.write(ruby_bin, <<~SH)
+      #!/bin/sh
+      # Ruby #{lib_version} cannot find its own prefix at run time; this wrapper does it instead.
+      bindir="${0%/*}"
+      prefix=$(cd "$bindir/.." && pwd -P)
+      exec "$prefix/libexec/ruby" \\
+        #{load_path} \\
+        "$@"
+    SH
+    FileUtils.chmod(0o755, ruby_bin)
+  end
+
+  # Ruby 1.8 ships without RubyGems; install it from source with the freshly built Ruby.
+  def install_rubygems
+    source = extract_source("rubygems", @deps.fetch(@series.fetch("rubygems")))
+    run ruby_bin, "setup.rb", "--no-ri", "--no-rdoc", cwd: source, env: test_env
+  end
+
+  def install_bundlers
+    versions = Array(@series["bundler"])
+    return if versions.empty?
+
+    gem = File.join(@install_prefix, "bin", "gem")
+    no_doc = capture(gem, "--version", env: test_env).strip.start_with?("1.") ? %w[--no-ri --no-rdoc] : %w[--no-document]
+    versions.each do |bundler|
+      run gem, "install", "bundler", "-v", bundler, *no_doc, env: test_env
+    end
+  end
+
+  # The built Ruby, run from its build location, with nothing from the host leaking in.
+  def test_env
+    { "PATH" => "#{File.join(@install_prefix, "bin")}:/usr/bin:/bin", "GEM_HOME" => nil, "GEM_PATH" => nil, "RUBYOPT" => nil }
   end
 
   def ensure_rust!
@@ -329,17 +491,65 @@ class PortableRubyPackage
   def ruby_configure_args(_source)
     libyaml = dep_prefix("libyaml")
     openssl = dep_prefix("openssl")
+    out_ext = %w[win32 win32ole] + Array(@series["extra_out_ext"])
+    out_ext << "readline" unless @series["readline_ext"]
     args = [
       "--prefix=#{@install_prefix}",
-      "--enable-load-relative",
-      "--with-out-ext=win32,win32ole",
+      "--with-out-ext=#{out_ext.uniq.join(",")}",
       "--without-gmp",
-      "--with-rdoc=ri",
       "--disable-dependency-tracking",
       "--with-libyaml-dir=#{libyaml}"
     ]
+    args << "--enable-load-relative" if @series["load_relative"] == "configure"
+    args << (@series["install_doc"] ? "--with-rdoc=ri" : "--disable-install-doc")
+    # Extensions older than 2.7 take pkg-config's word over --with-openssl-dir, and 1.8 has
+    # no pkg-config support at all; naming the directory covers both.
+    if legacy_openssl?
+      args << "--with-openssl-dir=#{openssl}"
+      # Static libcrypto needs pthread_atfork and dlopen. On glibc older than 2.34 those
+      # live in libpthread and libdl, and an extconf that takes --with-openssl-dir at its
+      # word links -lcrypto alone, so its SSL_new probe fails and the extension is silently
+      # skipped. Ruby's LIBS reach every extension's link line.
+      args << "LIBS=-lpthread -ldl" if linux?
+    end
+    args << "MJIT_CC=#{@series["mjit_cc"]}" if @series["mjit_cc"]
 
     baseruby = ENV["JDX_RUBY_BASERUBY"]
+    case @series.fetch("baseruby")
+    when "none"
+      # Every generated file ships in the tarball, and this configure would otherwise pick
+      # up whatever `ruby` is on PATH — the 3.x bootstrap — to run its own 2.x-era tools
+      # with. ruby_build_env hides it.
+    when "no"
+      args << "--with-baseruby=no"
+    else
+      args += baseruby_args(baseruby)
+    end
+
+    args << "--enable-yjit" if yjit && @series["yjit"]
+    if @series["use_libedit"]
+      args << "--enable-libedit=#{dep_prefix("libedit")}"
+      args << "--with-libedit-dir=#{dep_prefix("libedit")}"
+      args << "--with-opt-dir=#{dep_prefix("ncurses")}"
+      # Before 2.1 the readline extconf only looks where --with-readline-dir points; later
+      # ones look there too, so every old series gets it.
+      args << "--with-readline-dir=#{dep_prefix("libedit")}" if @series["test"] == "legacy"
+    end
+
+    args << "--with-libffi-dir=#{dep_prefix("libffi")}"
+    args << "--with-zlib-dir=#{dep_prefix("zlib")}"
+
+    if linux?
+      args << "MKDIR_P=/bin/mkdir -p"
+      args << "ac_cv_lib_z_uncompress=no"
+    end
+
+    ENV["OPENSSL_PREFIX"] = openssl
+    args
+  end
+
+  def baseruby_args(baseruby)
+    args = []
     if @series["requires_matching_baseruby"]
       baseruby = matching_baseruby(baseruby)
       args << "--with-baseruby=#{baseruby}"
@@ -358,19 +568,6 @@ class PortableRubyPackage
       end
       args << "--with-baseruby=#{RbConfig.ruby}"
     end
-
-    args << "--enable-yjit" if yjit
-    args << "--enable-libedit=#{dep_prefix("libedit")}" if @series["use_libedit"]
-
-    args << "--with-libffi-dir=#{dep_prefix("libffi")}"
-    args << "--with-zlib-dir=#{dep_prefix("zlib")}"
-
-    if linux?
-      args << "MKDIR_P=/bin/mkdir -p"
-      args << "ac_cv_lib_z_uncompress=no"
-    end
-
-    ENV["OPENSSL_PREFIX"] = openssl
     args
   end
 
@@ -459,17 +656,29 @@ class PortableRubyPackage
     extra_cflags = []
     extra_cflags << "-mno-outline-atomics" if linux_arm64?
 
-    build_env(
+    env = build_env(
       "PKG_CONFIG_PATH" => pkg_paths.compact.join(File::PATH_SEPARATOR),
       "CPPFLAGS" => cppflags.join(" "),
       "LDFLAGS" => ldflags.join(" "),
       "XCFLAGS" => (cppflags + extra_cflags).join(" "),
       "XLDFLAGS" => ldflags.join(" ")
     )
+    # A series may pin CFLAGS outright. Ruby's configure then uses them instead of its own
+    # optflags, exactly as ruby-build does — which is the point for the old sources that
+    # need -fno-strict-overflow to keep their fixnum arithmetic honest.
+    env["CFLAGS"] = @series["cflags"] if @series["cflags"]
+    env["MAKEFLAGS"] = "-j#{@series["make_jobs"]}" if @series["make_jobs"]
+    env["PATH"] = path_without_ruby(env["PATH"]) if @series["baseruby"] == "none"
+    env
+  end
+
+  def path_without_ruby(path)
+    path.split(File::PATH_SEPARATOR).reject { |dir| File.executable?(File.join(dir, "ruby")) }.join(File::PATH_SEPARATOR)
   end
 
   def stage_bundled_gems(source)
     bundled = File.join(source, "gems", "bundled_gems")
+    raise PackageError, "Ruby #{version} has no gems/bundled_gems; set bundled_gems: ~ for its series" unless File.file?(bundled)
     lines = File.readlines(bundled).reject do |line|
       stripped = line.strip
       stripped.empty? || stripped.start_with?("#") || stripped.include?("win32")
@@ -498,18 +707,51 @@ class PortableRubyPackage
     end
   end
 
+  # The sh/ruby polyglot Ruby's installer writes for bin/* under --enable-load-relative.
+  RELATIVE_STUB_PROLOG = [
+    "#!/bin/sh",
+    "# -*- ruby -*-",
+    "_=_\\",
+    "=begin",
+    'bindir="${0%/*}"',
+    'exec "$bindir/ruby" "-x" "$0" "$@"',
+    "=end",
+    ""
+  ].join("\n").freeze
+
+  RUBYGEMS_MARKER = "#\n# This file was generated by RubyGems.\n"
+
+  # Three things can be wrong with a bin/* stub, depending on the RubyGems that wrote it.
+  #
+  # RubyGems before 3.3 knows nothing of load-relative prefixes and writes an absolute
+  # "#!<build prefix>/bin/ruby" shebang, so anything `gem install` produced during the
+  # build (bundler, mostly) would break the moment the tree moved. Those get Ruby's own
+  # relative prolog.
+  #
+  # RubyGems before 3.3 also checks whether an existing stub is its own by looking for its
+  # marker on line three; in a polyglot that line is code, so reinstalling a gem whose
+  # executable exists is refused as a conflict. The marker goes in right after the shebang.
+  #
+  # Newer RubyGems writes the polyglot itself but wants the marker after the inner ruby
+  # shebang, which is the original patch below.
   def patch_executables
+    build_ruby = File.join(@install_prefix, "bin", "ruby")
     Dir.glob(File.join(@install_prefix, "bin", "*")).each do |exe|
       next unless File.file?(exe)
 
-      content = File.read(exe)
-      next unless content.start_with?("#!/bin/sh") && content.include?("#!/usr/bin/env ruby")
+      content = File.binread(exe)
+      next unless content.start_with?("#!")
 
-      patched = content.sub(
+      patched = content.sub(/\A#!#{Regexp.escape(build_ruby)}\S*[^\n]*\n/) { RELATIVE_STUB_PROLOG + "#!/usr/bin/env ruby\n" }
+      if patched.start_with?("#!/bin/sh\n") && patched.include?("This file was generated by RubyGems") &&
+         patched.lines[2].to_s !~ /This file was generated by RubyGems/
+        patched = patched.sub("\n", "\n" + RUBYGEMS_MARKER)
+      end
+      patched = patched.sub(
         %r{(#!/usr/bin/env ruby\n)\n(require 'rubygems')},
         "\\1#\n# This file was generated by RubyGems.\n#\n\\2"
       )
-      File.write(exe, patched) if patched != content
+      File.binwrite(exe, patched) if patched != content
     end
   end
 
@@ -543,7 +785,7 @@ class PortableRubyPackage
       # Prefer the relocated portable Ruby prefix when building native gems.
       module RbConfig
         build_root = #{build_root.dump}
-        portable_prefix = File.expand_path("..", File.dirname(RbConfig.ruby))
+        portable_prefix = CONFIG["prefix"]
         portable_include = File.join(portable_prefix, "include")
         portable_lib = File.join(portable_prefix, "lib")
         portable_pkgconfig = File.join(portable_lib, "pkgconfig")
@@ -599,15 +841,10 @@ class PortableRubyPackage
           config["CPPFLAGS"] = "\#{portable_cppflags} \#{config["CPPFLAGS"]}".strip
           config["LDFLAGS"] = "-L\#{portable_lib} \#{config["LDFLAGS"]}".strip
           config["DLDFLAGS"] = "-L\#{portable_lib} \#{config["DLDFLAGS"]}".strip
-          config["PKG_CONFIG_PATH"] = [portable_pkgconfig, config["PKG_CONFIG_PATH"]]
-            .compact
-            .reject(&:empty?)
-            .join(File::PATH_SEPARATOR)
+          # One line each: Ruby 1.8 cannot parse a method chain that starts a line with a dot.
+          config["PKG_CONFIG_PATH"] = [portable_pkgconfig, config["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(File::PATH_SEPARATOR)
         end
-        ENV["PKG_CONFIG_PATH"] = [portable_pkgconfig, ENV["PKG_CONFIG_PATH"]]
-          .compact
-          .reject(&:empty?)
-          .join(File::PATH_SEPARATOR)
+        ENV["PKG_CONFIG_PATH"] = [portable_pkgconfig, ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(File::PATH_SEPARATOR)
       end
     RUBY
   end
@@ -647,14 +884,20 @@ class PortableRubyPackage
     openssl_rb = Dir[File.join(@install_prefix, "lib", "ruby", "*", "openssl.rb")].first
     return unless openssl_rb
 
-    replacement = <<~'RUBY'.chomp
+    # With OpenSSL 3 the patched libcrypto searches the system stores itself, so Ruby only
+    # has to supply the bundled file when there is none. Older OpenSSLs are unpatched and
+    # would look in the build directory, so Ruby names the system store for them too.
+    # Written for the oldest Ruby it will run under: no RbConfig.ruby, no Dir.exist?.
+    use_system = legacy_openssl? ? "ENV[\"SSL_CERT_FILE\"] = found" : "nil"
+    replacement = <<~RUBY.chomp
+      require "rbconfig"
       if ENV["SSL_CERT_FILE"].to_s.empty? && ENV["SSL_CERT_DIR"].to_s.empty?
         jdx_cert_file = ENV["JDX_RUBY_SSL_CERT_FILE"].to_s
         if !jdx_cert_file.empty? && File.exist?(jdx_cert_file)
           ENV["SSL_CERT_FILE"] = jdx_cert_file
         else
           jdx_cert_dir = ENV["JDX_RUBY_SSL_CERT_DIR"].to_s
-          ENV["SSL_CERT_DIR"] = jdx_cert_dir if !jdx_cert_dir.empty? && Dir.exist?(jdx_cert_dir)
+          ENV["SSL_CERT_DIR"] = jdx_cert_dir if !jdx_cert_dir.empty? && File.directory?(jdx_cert_dir)
         end
       end
       if ENV["SSL_CERT_FILE"].to_s.empty? && ENV["SSL_CERT_DIR"].to_s.empty?
@@ -664,8 +907,11 @@ class PortableRubyPackage
           /etc/ssl/ca-bundle.pem
           /etc/ssl/cert.pem
         ]
-        unless system_certs.any? { |f| File.exist?(f) }
-          bundled = File.expand_path("../../libexec/cert.pem", RbConfig.ruby)
+        found = system_certs.find { |f| File.exist?(f) }
+        if found
+          #{use_system}
+        else
+          bundled = File.join(RbConfig::CONFIG["prefix"], "libexec", "cert.pem")
           ENV["SSL_CERT_FILE"] = bundled if File.exist?(bundled)
         end
       end
@@ -682,10 +928,12 @@ class PortableRubyPackage
     ruby = File.realpath(File.join(test_root, "bin", "ruby"))
     gem = File.join(test_root, "bin", "gem")
     bundle = File.join(test_root, "bin", "bundle")
-    env = { "PATH" => "/usr/bin:/bin", "GEM_HOME" => nil, "GEM_PATH" => nil }
+    env = { "PATH" => "/usr/bin:/bin", "GEM_HOME" => nil, "GEM_PATH" => nil, "RUBYOPT" => nil }
+    ruby_version = Gem::Version.new(version.split("-").first)
 
     assert_equal(version.split("-").first, capture(ruby, "-e", "print RUBY_VERSION", env: env).strip) unless version.include?("preview")
-    assert_equal(ruby, capture(ruby, "-e", "print RbConfig.ruby", env: env).strip)
+    # RbConfig.ruby arrived in 1.9; this spelling is what it computes.
+    assert_equal(ruby, capture(ruby, "-rrbconfig", "-e", "print File.join(RbConfig::CONFIG['bindir'], RbConfig::CONFIG['ruby_install_name'])", env: env).strip)
     assert_equal("3632233996", capture(ruby, "-rzlib", "-e", "print Zlib.crc32('test')", env: env).strip)
     readline_breaks = capture(ruby, "-rreadline", "-e", "print Readline.basic_word_break_characters", env: env)
     if @series["use_libedit"]
@@ -695,22 +943,66 @@ class PortableRubyPackage
     else
       assert_equal(" \t\n`><=;|&{(", readline_breaks)
     end
-    yaml_output = capture(ruby, "-ryaml", "-e", "print YAML.load('a: b')", env: env).strip
+    # inspect, not print: 1.8's Hash#to_s runs the values together.
+    yaml_output = capture(ruby, "-ryaml", "-e", "print YAML.load('a: b').inspect", env: env).strip
     raise PackageError, "unexpected YAML output: #{yaml_output}" unless yaml_output.include?('"a"') && yaml_output.include?('"b"')
     assert_equal("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                  capture(ruby, "-ropenssl", "-e", "print OpenSSL::Digest::SHA256.hexdigest('')", env: env).strip)
-    run ruby, "-ropen-uri", "-e", "URI.open('https://google.com') { |f| abort unless f.status.first == '200' }", env: env
-    run ruby, "-rrbconfig", "-e", "Gem.discover_gems_on_require = false if Gem.respond_to?(:discover_gems_on_require=); require 'portable_ruby_gems'; require 'debug'; require 'fiddle'; require 'bootsnap'", env: env
+    # URI.open is 2.5+; before that open-uri extends Kernel#open. rubygems.org rather than
+    # google.com because the oldest openssl extensions don't send SNI.
+    open_call = ruby_version >= Gem::Version.new("2.5") ? "URI.open" : "open"
+    run ruby, "-ropen-uri", "-e", "#{open_call}('https://rubygems.org/') { |f| abort unless f.status.first == '200' }", env: env
+    if bundled_gems?
+      requires = %w[portable_ruby_gems fiddle bootsnap]
+      requires << "debug" if ruby_version >= Gem::Version.new("3.1")
+      run ruby, "-rrbconfig", "-e", "Gem.discover_gems_on_require = false if Gem.respond_to?(:discover_gems_on_require=); #{requires.map { |r| "require '#{r}'" }.join("; ")}", env: env
+    elsif ruby_version >= Gem::Version.new("1.9")
+      run ruby, "-rfiddle", "-rbigdecimal", "-rjson", "-rdate", "-rsocket", "-rdigest/sha2", "-e", "true", env: env
+    end
     run gem, "environment", env: env
     run bundle, "init", cwd: File.dirname(test_root), env: env
-    run ruby, File.join(test_root, "bin", "ri"), "-T", "-f", "markdown", "Object", env: env
-    run gem, "install", "byebug", env: env
-    run File.join(test_root, "bin", "byebug"), "--version", env: env
-    install_default_native_gem(ruby, "openssl", env)
-    install_default_native_gem(ruby, "psych", env)
-    run gem, "install", "ruby-lsp", env: env
+    run ruby, File.join(test_root, "bin", "ri"), "-T", "-f", "markdown", "Object", env: env if @series["install_doc"]
+    if @series["test"] == "modern"
+      run gem, "install", "byebug", env: env
+      run File.join(test_root, "bin", "byebug"), "--version", env: env
+      install_default_native_gem(ruby, "openssl", env)
+      install_default_native_gem(ruby, "psych", env)
+      run gem, "install", "ruby-lsp", env: env
+    elsif (native = @series["test_native_gem"])
+      # A C extension that supports this Ruby, to prove native gems still build once the
+      # tree has moved: the compiler must find the bundled headers and static libraries.
+      no_doc = capture(gem, "--version", env: env).strip.start_with?("1.") ? %w[--no-ri --no-rdoc] : %w[--no-document]
+      run gem, "install", native.fetch("name"), "-v", native.fetch("version"), *no_doc, env: env
+      # From -e, not -r: on 1.8 the command-line -r bypasses RubyGems' require and can't
+      # see installed gems.
+      run ruby, "-e", "require 'rubygems'; require '#{native.fetch("require", native.fetch("name"))}'", env: env
+    end
     check_no_homebrew_paths!(test_root, ruby, env)
+    check_linkage!(test_root) if linux?
     check_abi!(test_root) if linux?
+  end
+
+  # Nothing in the tree may need a shared library that isn't part of glibc. This is the
+  # static-linking promise, checked rather than assumed.
+  def check_linkage!(root)
+    # libanl (getaddrinfo_a, wanted by socket.so) is glibc too: separate before 2.34, a
+    # compatibility stub after.
+    allowed = /\A(linux-vdso|ld-linux[^ ]*|libc|libm|libpthread|libdl|librt|libcrypt|libgcc_s|libresolv|libutil|libnsl|libanl)\.so/
+    offenders = []
+    Dir.glob(File.join(root, "**", "*")).each do |path|
+      next unless File.file?(path)
+      kind = capture("file", path)
+      # Object files and static archives are ELF too, but have nothing to resolve.
+      next unless kind.include?("ELF") && kind.include?("dynamically linked")
+
+      capture("ldd", path, allow_failure: true).each_line do |line|
+        lib = line.strip.split(/\s+/).first.to_s
+        next if lib.empty? || lib =~ /\Alinux-vdso/
+        next if File.basename(lib) =~ allowed
+        offenders << "#{path.sub("#{root}/", "")} -> #{lib}"
+      end
+    end
+    raise PackageError, "not portable, dynamic dependencies outside glibc:\n  #{offenders.uniq.join("\n  ")}" unless offenders.empty?
   end
 
   def install_default_native_gem(ruby, gem_name, env)
@@ -855,7 +1147,10 @@ class PortableRubyPackage
   end
 
   def jobs
-    @jobs ||= [Etc.respond_to?(:nprocessors) ? Etc.nprocessors : 2, 2].max
+    @jobs ||= begin
+      requested = ENV["JDX_RUBY_JOBS"].to_i
+      requested > 0 ? requested : [Etc.respond_to?(:nprocessors) ? Etc.nprocessors : 2, 2].max
+    end
   end
 
   def dep_prefix(name)

@@ -12,7 +12,182 @@ defaults:
       sha256: 0ae2393c1e911e38be0f24e9173e7be570c3650128251bf06240046f84a07d00
   requires_matching_baseruby: false
   use_libedit: false
+  # Everything below is what the current Rubies get; older series override as needed.
+  openssl: openssl                # key in dependencies.yml — 3.1 and later take OpenSSL 3
+  baseruby: required              # required | no (--with-baseruby=no) | none (hide host ruby)
+  load_relative: configure        # configure (--enable-load-relative) | wrapper (1.8 only)
+  readline_ext: true              # false leaves ext/readline out; readline.rb then uses reline
+  install_doc: true
+  install_target: install
+  cflags: ~                       # replaces configure's optflags when set, as ruby-build does
+  make_jobs: ~
+  patches: []
+  freshen_config_guess: false
+  extra_out_ext: []
+  rubygems: ~                     # dependency to install RubyGems from, for Rubies without it
+  bundler: []                     # bundler versions to gem install
+  mjit_cc: ~
+  yjit: rust                      # rust | c (3.1) | false
+  test: modern                    # modern | legacy
+  test_native_gem: ~
 series:
+  # --- Rubies past their end of life ------------------------------------------------------
+  # Built for local development, not production. Shared settings: OpenSSL 1.0 or 1.1
+  # because their openssl extensions predate OpenSSL 3; -fno-strict-overflow because
+  # their fixnum overflow checks rely on signed overflow wrapping, which GCC exploits from
+  # -O2 up (a 1.8.7 built without it evaluates 2**64 to 0); readline through a bundled
+  # libedit; no bundled msgpack/bootsnap; a version-appropriate native gem as the test.
+  "1.8":
+    openssl: openssl1.0
+    baseruby: none
+    load_relative: wrapper
+    use_libedit: true
+    install_doc: false
+    install_target: install-nodoc   # 1.8 has no --disable-install-doc
+    cflags: "-O3 -fno-strict-overflow"
+    patches: [lex_c99]
+    freshen_config_guess: true
+    extra_out_ext: [tk, tcltklib, gdbm, dbm]   # removed from the tree: 1.8 has no --with-out-ext
+    rubygems: rubygems1.8
+    bundler: ["1.17.3"]
+    bundled_gems: ~
+    yjit: false
+    test: legacy
+    test_native_gem: { name: json, version: 1.8.6 }
+  "1.9":
+    openssl: openssl1.0
+    baseruby: none
+    use_libedit: true
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    make_jobs: 1                    # parallel make races in ext/ on 1.9.3
+    freshen_config_guess: true
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3"]
+    bundled_gems: ~
+    yjit: false
+    test: legacy
+    test_native_gem: { name: json, version: 1.8.6 }
+  "2.0":
+    openssl: openssl1.0
+    baseruby: none
+    use_libedit: true
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    freshen_config_guess: true      # 2.0's config.guess predates aarch64
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3"]
+    bundled_gems: ~
+    yjit: false
+    test: legacy
+    test_native_gem: { name: json, version: 1.8.6 }
+  "2.1":
+    openssl: openssl1.0
+    baseruby: none
+    use_libedit: true
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3"]
+    bundled_gems: ~
+    yjit: false
+    test: legacy
+    test_native_gem: { name: json, version: 1.8.6 }
+  "2.2":
+    openssl: openssl1.0
+    baseruby: none
+    use_libedit: true
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3"]
+    bundled_gems: ~
+    yjit: false
+    test: legacy
+    test_native_gem: { name: json, version: 1.8.6 }
+  "2.3":
+    openssl: openssl1.0
+    baseruby: none
+    use_libedit: true
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3"]
+    bundled_gems: ~
+    yjit: false
+    test: legacy
+    test_native_gem: { name: json, version: 1.8.6 }
+  "2.4":
+    openssl: openssl1.1
+    baseruby: none                  # 2.4's configure rejects --with-baseruby=no
+    use_libedit: true
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3", "2.3.27"]
+    bundled_gems: ~
+    yjit: false
+    test: legacy
+    test_native_gem: { name: msgpack, version: 1.4.2 }
+  "2.5":
+    openssl: openssl1.1
+    baseruby: "no"
+    use_libedit: true
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3", "2.3.27"]
+    bundled_gems: ~
+    yjit: false
+    test: legacy
+    test_native_gem: { name: msgpack, version: 1.4.2 }
+  "2.6":
+    openssl: openssl1.1
+    baseruby: "no"
+    use_libedit: true
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3", "2.4.22"]
+    bundled_gems: ~
+    mjit_cc: /usr/bin/cc            # MJIT compiles at run time; not with the build's gcc path
+    yjit: false
+    test: legacy
+    test_native_gem: { name: msgpack, version: 1.4.2 }
+  "2.7":
+    openssl: openssl1.1
+    baseruby: "no"
+    readline_ext: false             # readline.rb falls back to reline from 2.7
+    install_doc: false
+    cflags: "-O3 -fno-strict-overflow"
+    extra_out_ext: [tk, tcl, gdbm, dbm]
+    bundler: ["1.17.3", "2.4.22"]
+    bundled_gems: ~
+    mjit_cc: /usr/bin/cc
+    yjit: false
+    test: legacy
+    test_native_gem: { name: msgpack, version: 1.4.2 }
+  "3.0":
+    openssl: openssl1.1             # 3.0's openssl extension predates OpenSSL 3
+    readline_ext: false
+    install_doc: false
+    extra_out_ext: [gdbm, dbm]
+    bundled_gems: ~
+    mjit_cc: /usr/bin/cc
+    yjit: false
+    test: legacy
+    test_native_gem: { name: msgpack, version: 1.4.2 }
+  "3.1":
+    openssl: openssl1.1             # OpenSSL 3 is supported but this keeps 2.4–3.1 uniform
+    readline_ext: false
+    install_doc: false
+    extra_out_ext: [gdbm, dbm]
+    bundled_gems: ~
+    mjit_cc: /usr/bin/cc
+    yjit: c                         # YJIT was C in 3.1; no Rust needed
+    test: legacy
+    test_native_gem: { name: msgpack, version: 1.4.2 }
+  # --- Supported Rubies -------------------------------------------------------------------
   "3.2":
     requires_matching_baseruby: true
     use_libedit: true

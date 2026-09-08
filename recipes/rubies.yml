@@ -1,6 +1,57 @@
 ---
 schema: 1
 rubies:
+  1.8.7-p374:
+    series: '1.8'
+    url: https://cache.ruby-lang.org/pub/ruby/1.8/ruby-1.8.7-p374.tar.bz2
+    sha256: b4e34703137f7bfb8761c4ea474f7438d6ccf440b3d35f39cc5e4d4e239c07e3
+    version: 1.8.7-p374
+  1.9.3-p551:
+    series: '1.9'
+    url: https://cache.ruby-lang.org/pub/ruby/1.9/ruby-1.9.3-p551.tar.bz2
+    sha256: b0c5e37e3431d58613a160504b39542ec687d473de1d4da983dabcf3c5de771e
+    version: 1.9.3-p551
+  2.0.0-p648:
+    series: '2.0'
+    url: https://cache.ruby-lang.org/pub/ruby/2.0/ruby-2.0.0-p648.tar.bz2
+    sha256: 087ad4dec748cfe665c856dbfbabdee5520268e94bb81a1d8565d76c3cc62166
+    version: 2.0.0-p648
+  2.1.10:
+    series: '2.1'
+    url: https://cache.ruby-lang.org/pub/ruby/2.1/ruby-2.1.10.tar.bz2
+    sha256: a74675578a9a801ac25eb7152bef3023432d6267f875b198eb9cd6944a5bf4f1
+  2.2.10:
+    series: '2.2'
+    url: https://cache.ruby-lang.org/pub/ruby/2.2/ruby-2.2.10.tar.bz2
+    sha256: a54204d2728283c9eff0cf81d654f245fa5b3447d0824f1a6bc3b2c5c827381e
+  2.3.8:
+    series: '2.3'
+    url: https://cache.ruby-lang.org/pub/ruby/2.3/ruby-2.3.8.tar.bz2
+    sha256: 4d1a3a88e8cf9aea624eb73843fbfc60a9a281582660f86d5e4e00870397407c
+  2.4.10:
+    series: '2.4'
+    url: https://cache.ruby-lang.org/pub/ruby/2.4/ruby-2.4.10.tar.bz2
+    sha256: 6ea3ce7fd0064524ae06dbdcd99741c990901dfc9c66d8139a02f907d30b95a8
+  2.5.9:
+    series: '2.5'
+    url: https://cache.ruby-lang.org/pub/ruby/2.5/ruby-2.5.9.tar.bz2
+    sha256: bebbe3fe7899acd3ca2f213de38158709555e88a13f85ba5dc95239654bcfeeb
+  2.6.10:
+    series: '2.6'
+    url: https://cache.ruby-lang.org/pub/ruby/2.6/ruby-2.6.10.tar.bz2
+    sha256: 399e1f13e7fedc3c6ae2ff541bbf26c44dfb63b07b6c186fdd15b4e526e27e9c
+  2.7.8:
+    series: '2.7'
+    url: https://cache.ruby-lang.org/pub/ruby/2.7/ruby-2.7.8.tar.gz
+    sha256: c2dab63cbc8f2a05526108ad419efa63a67ed4074dbbcf9fc2b1ca664cb45ba0
+  3.0.7:
+    series: '3.0'
+    url: https://cache.ruby-lang.org/pub/ruby/3.0/ruby-3.0.7.tar.gz
+    sha256: 2a3411977f2850431136b0fab8ad53af09fb74df2ee2f4fb7f11b378fe034388
+  3.1.7:
+    series: '3.1'
+    url: https://cache.ruby-lang.org/pub/ruby/3.1/ruby-3.1.7.tar.gz
+    sha256: 0556acd69f141ddace03fa5dd8d76e7ea0d8f5232edf012429579bcdaab30e7b
   3.2.1:
     series: '3.2'
     url: https://cache.ruby-lang.org/pub/ruby/3.2/ruby-3.2.1.tar.xz
