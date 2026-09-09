@@ -71,7 +71,7 @@ These Rubies use the first available certificate source in this order:
 ## How do I issue a new release
 
 [An automated release workflow is available to use](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/release.yml).
-Dispatch the workflow with a Ruby version and it will build, tag, upload SLSA provenance, and publish both the floating release and immutable build revision release.
+Dispatch the workflow with a Ruby version and it will build, upload SLSA provenance, publish an immutable build revision release (e.g. `3.4.7-2`), and then re-point the floating release (e.g. `3.4.7`) at that build. The floating release is updated in place rather than recreated, so its download URLs keep working while a rebuild is in flight or if one fails.
 
 [Release New Versions](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/release-new.yml)
 dispatches that for every recipe that has no release yet; it runs on a schedule, when

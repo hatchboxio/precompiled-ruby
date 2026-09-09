@@ -113,19 +113,13 @@ jobs:
             echo "has_changelog=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create releases
+      - name: Create revision release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           RUBY_RELEASE_DATE: ${{ steps.ruby-release.outputs.date }}
           HAS_CHANGELOG: ${{ steps.ruby-release.outputs.has_changelog }}
           REVISION_TAG: ${{ steps.revision.outputs.tag }}
         run: |
-          if [[ "${{ inputs.latest }}" == "true" ]]; then
-            latest_flag="--latest"
-          else
-            latest_flag="--latest=false"
-          fi
-
           # Mark as prerelease if version contains preview or rc
           if echo "${VERSION}" | grep -qiE '(preview|rc)'; then
             prerelease_flag="--prerelease"
@@ -150,26 +144,20 @@ jobs:
 
           TARGET="$(git rev-parse --verify HEAD)"
 
-          # Delete ALL existing floating releases matching this version (handles orphaned releases)
-          for release_id in $(gh api repos/${{ github.repository }}/releases --paginate --jq ".[] | select(.name == \"${VERSION}\" or .tag_name == \"${VERSION}\") | .id"); do
-            echo "Deleting release $release_id"
-            gh api -X DELETE "repos/${{ github.repository }}/releases/$release_id" || true
-          done
-          # Also delete the tag if it exists
-          gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/${VERSION}" 2>/dev/null || true
-
-          # Create floating release (e.g., 3.4.5) — always updated to latest build
-          gh release create "${VERSION}" \
-            --draft \
-            --notes-file /tmp/release_notes.md \
-            --target "$TARGET" \
-            --title "${VERSION}" \
-            $latest_flag \
-            $prerelease_flag
-
-          # Create pinned revision release (e.g., 3.4.5-1) — immutable snapshot
+          # Only the pinned revision release (e.g., 3.4.5-1) is created here, as a draft.
+          # The floating release (e.g., 3.4.5) is left untouched until publish-release
+          # re-points it at this build, so a failure anywhere in this workflow never
+          # leaves the floating release missing.
           echo "" >> /tmp/release_notes.md
           echo "**Build revision:** ${REVISION_TAG}" >> /tmp/release_notes.md
+
+          # Drop leftover drafts for this revision from an earlier run that failed before
+          # publishing; a draft has no tag, so the revision number can repeat until published.
+          for release_id in $(gh api repos/${{ github.repository }}/releases --paginate --jq ".[] | select(.draft and .tag_name == \"${REVISION_TAG}\") | .id"); do
+            echo "Deleting stale draft $release_id for ${REVISION_TAG}"
+            gh api -X DELETE "repos/${{ github.repository }}/releases/$release_id"
+          done
+
           gh release create "${REVISION_TAG}" \
             --draft \
             --notes-file /tmp/release_notes.md \
@@ -210,13 +198,12 @@ jobs:
           path: rubies
           merge-multiple: true
 
-      - name: Upload tarballs to GitHub Release
+      - name: Upload tarballs to the revision release
         working-directory: rubies
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           REVISION_TAG: ${{ needs.create-release.outputs.revision_tag }}
         run: |
-          gh release upload "${VERSION}" *.tar.gz --clobber --repo "${{ github.repository }}"
           gh release upload "${REVISION_TAG}" *.tar.gz --clobber --repo "${{ github.repository }}"
 
       - name: Download SLSA provenance
@@ -225,12 +212,11 @@ jobs:
           name: "ruby-${{ inputs.version }}.intoto.jsonl"
           path: provenance
 
-      - name: Upload SLSA provenance to release
+      - name: Upload SLSA provenance to the revision release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           REVISION_TAG: ${{ needs.create-release.outputs.revision_tag }}
         run: |
-          gh release upload "${VERSION}" provenance/*.intoto.jsonl --clobber --repo "${{ github.repository }}"
           gh release upload "${REVISION_TAG}" provenance/*.intoto.jsonl --clobber --repo "${{ github.repository }}"
 
       - name: Attest build provenance
@@ -245,11 +231,24 @@ jobs:
       contents: write
     env:
       VERSION: ${{ inputs.version }}
+      REVISION_TAG: ${{ needs.create-release.outputs.revision_tag }}
+      GH_REPO: ${{ github.repository }}
+      GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
     steps:
-      - name: Publish release
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
-          REVISION_TAG: ${{ needs.create-release.outputs.revision_tag }}
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: ruby-${{ inputs.version }}-*
+          path: rubies
+          merge-multiple: true
+
+      - name: Download SLSA provenance
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: "ruby-${{ inputs.version }}.intoto.jsonl"
+          path: rubies
+
+      - name: Publish pinned revision release
         run: |
           # Mark as prerelease if version contains preview or rc
           if echo "${VERSION}" | grep -qiE '(preview|rc)'; then
@@ -257,16 +256,70 @@ jobs:
           else
             prerelease_flag=""
           fi
+          gh release edit "${REVISION_TAG}" --draft=false --latest=false $prerelease_flag
 
-          # Publish floating release
-          if [[ "${{ inputs.latest }}" == "true" ]]; then
-            gh release edit "${VERSION}" --draft=false --latest $prerelease_flag --repo "${{ github.repository }}"
+      - name: Point the floating release at this build
+        working-directory: rubies
+        run: |
+          # The floating release (e.g., 3.4.5) always serves the latest build of a version.
+          # It is updated in place, never deleted, so its download URLs keep working
+          # throughout a rebuild: at worst a single asset is briefly replaced.
+          if echo "${VERSION}" | grep -qiE '(preview|rc)'; then
+            prerelease_flag="--prerelease"
           else
-            gh release edit "${VERSION}" --draft=false --latest=false $prerelease_flag --repo "${{ github.repository }}"
+            prerelease_flag=""
+          fi
+          if [[ "${{ inputs.latest }}" == "true" ]]; then
+            latest_flag="--latest"
+          else
+            latest_flag="--latest=false"
           fi
 
-          # Publish pinned revision release
-          gh release edit "${REVISION_TAG}" --draft=false --latest=false $prerelease_flag --repo "${{ github.repository }}"
+          gh release view "${REVISION_TAG}" --json body --jq .body > /tmp/release_notes.md
+
+          # Leftover drafts for the floating tag from an older workflow version have no tag
+          # and serve nothing, so they are safe to remove.
+          for release_id in $(gh api "repos/${GH_REPO}/releases" --paginate --jq ".[] | select(.draft and .tag_name == \"${VERSION}\") | .id"); do
+            echo "Deleting stale draft $release_id for ${VERSION}"
+            gh api -X DELETE "repos/${GH_REPO}/releases/$release_id"
+          done
+
+          release_id="$(gh api "repos/${GH_REPO}/releases" --paginate --jq ".[] | select((.draft | not) and .tag_name == \"${VERSION}\") | .id" | head -1)"
+          if [[ -z "$release_id" ]]; then
+            echo "Creating floating release ${VERSION}"
+            gh release create "${VERSION}" \
+              --notes-file /tmp/release_notes.md \
+              --target "${{ github.sha }}" \
+              --title "${VERSION}" \
+              $latest_flag \
+              $prerelease_flag \
+              *.tar.gz *.intoto.jsonl
+          else
+            echo "Updating floating release ${VERSION} (id $release_id) in place"
+            gh release upload "${VERSION}" *.tar.gz *.intoto.jsonl --clobber
+            gh release edit "${VERSION}" \
+              --notes-file /tmp/release_notes.md \
+              --title "${VERSION}" \
+              --draft=false \
+              $latest_flag \
+              $prerelease_flag
+
+            # Remove assets from an earlier build that this build no longer produces
+            # (e.g., a target that was dropped), so the floating release only ever
+            # serves files from a single revision.
+            for asset in $(gh api "repos/${GH_REPO}/releases/${release_id}/assets" --paginate --jq '.[] | "\(.id):\(.name)"'); do
+              asset_id="${asset%%:*}"
+              asset_name="${asset#*:}"
+              if [[ ! -e "$asset_name" ]]; then
+                echo "Deleting stale asset ${asset_name}"
+                gh api -X DELETE "repos/${GH_REPO}/releases/assets/${asset_id}"
+              fi
+            done
+          fi
+
+          # Move the floating tag to the commit this build came from.
+          gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/${VERSION}" \
+            -f sha="${{ github.sha }}" -F force=true > /dev/null
 
   notify:
     needs: [build, combine-hashes, create-release, provenance, upload-assets, publish-release]
