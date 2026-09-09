@@ -74,9 +74,10 @@ These Rubies use the first available certificate source in this order:
 Dispatch the workflow with a Ruby version and it will build, tag, upload SLSA provenance, and publish both the floating release and immutable build revision release.
 
 [Release New Versions](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/release-new.yml)
-dispatches that for every recipe that has no release yet and that upstream does not build;
-it runs on a schedule, when `recipes/rubies.yml` changes on `main`, or by hand, where its
-`only` input releases exactly the versions you name instead, upstream's or not.
+dispatches that for every recipe that has no release yet; it runs on a schedule, when
+`recipes/rubies.yml` changes on `main`, or by hand, where its `only` input releases exactly
+the versions you name instead. On a fresh fork the default means every recipe, so the first
+run is a big one; use `only` to start smaller.
 
 Series can opt out of the macOS build with `macos: false` in `recipes/series.yml`, and out
 of the yjit variants with `yjit: false`; the end-of-life series do both, and release Linux
@@ -91,25 +92,7 @@ No secrets are required. Optional ones:
 - `RESEND_API_KEY` and `NOTIFY_EMAIL`: release result emails via Resend.
 
 On a fork, GitHub disables scheduled workflows until they are enabled once in the Actions
-tab; the upstream mirror is one of them.
-
-## Upstream releases
-
-Current Rubies are not built here at all. [Mirror Upstream Releases](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/mirror-upstream.yml)
-copies every published release of [jdx/ruby](https://github.com/jdx/ruby/releases) into
-this repository as it appears, assets, provenance file, and release notes included, so the
-releases here are a superset of upstream's: current series from upstream's builds, the
-end-of-life series from the recipes here. It runs every three hours, mirrors oldest first,
-and refreshes a floating release (`3.4.9`) whenever upstream adds a build revision to it
-(`3.4.9-5`), the way upstream's own release does. Release New Versions leaves every version
-upstream has a recipe for to it; set its `UPSTREAM_REPO` to `''` to build everything here.
-
-The logic is `bin/mirror-upstream-releases`, which runs from any machine with `gh` logged
-in: `--dry-run` prints the plan, `--limit N` caps a run (the workflow's default is 40, within
-the built-in token's API rate limit), and `--only TAG...` mirrors exactly those tags,
-replacing whatever this repository has under them, which is also how to redo a mirror that
-went wrong. The first run on a fresh fork has a couple of hundred releases to copy and
-spreads them over several scheduled runs.
+tab.
 
 ## Thanks
 
