@@ -18,6 +18,8 @@ class PackageError < StandardError; end
 class PortableRubyPackage
   ROOT = File.expand_path("..", __dir__)
   CACHE_DIR = File.join(ROOT, ".cache", "sources")
+  # Seconds to wait before each download attempt of one URL; see #download.
+  DOWNLOAD_RETRY_DELAYS = [0, 15, 45, 90].freeze
 
   attr_reader :version, :target, :yjit, :output_dir
 
@@ -1074,16 +1076,25 @@ class PortableRubyPackage
     end
 
     FileUtils.rm_f(path)
+    # Alternate between the primary URL and the mirror, in rounds with a growing pause:
+    # curl's own --retry only covers HTTP errors, not a host that is down (the
+    # manylinux2014 curl is too old for --retry-all-errors), and a single upstream
+    # outage should not fail a build.
     urls = [recipe["url"], recipe["mirror"]].compact
-    urls.each_with_index do |url, index|
+    attempts = DOWNLOAD_RETRY_DELAYS.flat_map { |delay| urls.map { |url| [url, delay] } }
+    attempts.each_with_index do |(url, delay), index|
+      if delay.positive? && url == urls.first
+        puts "==> #{name}: download failed, retrying in #{delay}s"
+        sleep delay
+      end
       begin
-        run "curl", "-fL", "--retry", "3", "-o", path, url
+        run "curl", "-fL", "--retry", "3", "--connect-timeout", "30", "-o", path, url
         actual = Digest::SHA256.file(path).hexdigest
         raise PackageError, "#{name}: expected #{recipe.fetch("sha256")}, got #{actual}" unless actual == recipe.fetch("sha256")
         return path
       rescue PackageError
         FileUtils.rm_f(path)
-        raise if index == urls.length - 1
+        raise if index == attempts.length - 1
       end
     end
   end
