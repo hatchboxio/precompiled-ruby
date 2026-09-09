@@ -108,13 +108,14 @@ class PortableRubyPackage
     end
   end
 
-  # Old series have no YJIT to enable. The release workflow still asks for both variants,
-  # so rather than fail half the matrix, build the same Ruby under the requested name.
+  # Old series have no YJIT worth shipping. The release workflow doesn't ask for the yjit
+  # variant of those, but a hand-run request is honoured by building the same Ruby under
+  # the requested name rather than failing.
   def validate_yjit!
     return unless yjit
     return if @series["yjit"]
 
-    warn "warning: Ruby #{version} predates YJIT; building without it under the --yjit artifact name"
+    warn "warning: Ruby #{version} has no supported YJIT; building without it under the --yjit artifact name"
   end
 
   def validate_host!
@@ -349,7 +350,7 @@ class PortableRubyPackage
   end
 
   def build_ruby!
-    ensure_rust! if yjit && @series["yjit"] == "rust"
+    ensure_rust! if yjit && @series["yjit"]
     source = extract_source("ruby", @ruby_recipe)
     apply_source_patches(source)
     remove_extensions(source) if package_version < Gem::Version.new("1.9")

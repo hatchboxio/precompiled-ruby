@@ -53,8 +53,9 @@ arm64 macOS configuration at all.
 Because they are built against glibc 2.17 like everything else here, the tarballs run on
 any Ubuntu LTS from 20.04 (Focal) on, and on other distributions of that vintage or newer.
 
-`--yjit` on a series without YJIT prints a warning and builds without it under the
-requested artifact name, so the release matrix still produces every file it expects.
+Series with `yjit: false` (everything up to 3.1, whose C-based YJIT was experimental) get
+only the `no_yjit` variants in a release. A hand-run `bin/package --yjit` on one prints a
+warning and builds without YJIT under the requested name rather than failing.
 
 ## SSL certificates
 
@@ -78,8 +79,9 @@ dispatches that for every recipe that has no release yet; it runs on a schedule,
 the versions you name instead. On a fresh fork the default means every recipe, so the first
 run is a big one; use `only` to start smaller.
 
-Series can opt out of the macOS build with `macos: false` in `recipes/series.yml`; the
-end-of-life series do, and release Linux tarballs only.
+Series can opt out of the macOS build with `macos: false` in `recipes/series.yml`, and out
+of the yjit variants with `yjit: false`; the end-of-life series do both, and release Linux
+`no_yjit` tarballs only.
 
 No secrets are required. Optional ones:
 
