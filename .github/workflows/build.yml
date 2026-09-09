@@ -42,7 +42,8 @@ jobs:
         env:
           YJIT: ${{ steps.info.outputs.yjit }}
         run: |
-          # Both variants per target when the series has YJIT, otherwise no_yjit only.
+          # Both variants per target when the series has YJIT, otherwise one build per target
+          # (bin/package names it without the .no_yjit suffix).
           if [[ "$YJIT" == "true" ]]; then yjits='[true, false]'; else yjits='[false]'; fi
           echo "linux=$(jq -c -n --argjson yjits "$yjits" '{include: [
             {runner: "ubuntu-22.04",     target: "x86_64_linux"},

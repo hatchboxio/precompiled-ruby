@@ -66,3 +66,5 @@ Release tarballs keep the existing names:
 - `ruby-VERSION.x86_64_linux.no_yjit.tar.gz`
 - `ruby-VERSION.arm64_linux.tar.gz`
 - `ruby-VERSION.arm64_linux.no_yjit.tar.gz`
+
+The `.no_yjit` suffix only exists where a series has both variants. Series with `yjit: false` produce one build per target under the plain name, which is what mise asks for.

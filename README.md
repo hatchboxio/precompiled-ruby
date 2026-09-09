@@ -13,6 +13,9 @@ Release artifacts are named:
 - `ruby-VERSION.arm64_linux.tar.gz`
 - `ruby-VERSION.arm64_linux.no_yjit.tar.gz`
 
+Series without YJIT (everything up to 3.1) have a single build per target, released under
+the plain name (`ruby-VERSION.x86_64_linux.tar.gz`), which is the name mise and asdf ask for.
+
 ## Local development
 
 Recipes are checked in under `recipes/`:
@@ -51,8 +54,8 @@ Because they are built against glibc 2.17 like everything else here, the tarball
 any Ubuntu LTS from 20.04 (Focal) on, and on other distributions of that vintage or newer.
 
 Series with `yjit: false` (everything up to 3.1, whose C-based YJIT was experimental) get
-only the `no_yjit` variants in a release. A hand-run `bin/package --yjit` on one prints a
-warning and builds without YJIT under the requested name rather than failing.
+one build per target in a release, under the plain name. A hand-run `bin/package --yjit` on
+one prints a warning and builds without YJIT, producing that same artifact, rather than failing.
 
 ## SSL certificates
 
@@ -84,7 +87,7 @@ the versions you name instead. On a fresh fork the default means every recipe, s
 run is a big one; use `only` to start smaller.
 
 Series can opt out of the yjit variants with `yjit: false` in `recipes/series.yml`; the
-end-of-life series do, and release `no_yjit` tarballs only.
+end-of-life series do, and release one tarball per target under the plain name.
 
 No secrets are required. Optional ones:
 
