@@ -52,7 +52,10 @@ dependencies:
     url: https://ftp.gnu.org/gnu/ncurses/ncurses-6.3.tar.gz
     mirror: https://invisible-mirror.net/archives/ncurses/ncurses-6.3.tar.gz
     sha256: 97fc51ac2b085d4cde31ef4d2c3122c21abc217e9090a43a30fc5ec21684e059
+  # thrysoee.dk is a single host with no public mirror, so a byte-identical copy lives in
+  # this repository's `sources` release.
   libedit:
     version: 20221009-3.1
     url: https://thrysoee.dk/editline/libedit-20221009-3.1.tar.gz
+    mirror: https://github.com/hatchboxio/precompiled-ruby/releases/download/sources/libedit-20221009-3.1.tar.gz
     sha256: b7b135a5112ce4344c9ac3dff57cc057b2b0e1b912619a36cf1d13fce8e88626
