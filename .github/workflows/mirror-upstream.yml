@@ -1,0 +1,64 @@
+name: Mirror Upstream Releases
+
+# Copies jdx/ruby's published releases into this repository as they appear, assets and
+# release notes included, so this repository's releases are a superset of upstream's:
+# current Rubies come from upstream's builds, the end-of-life series from our recipes
+# (release-new.yml leaves any version upstream has a recipe for to this workflow).
+# The logic is bin/mirror-upstream-releases, which also runs from a laptop.
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Mirror exactly these upstream release tags, space-separated, replacing any release we have under them'
+        required: false
+        type: string
+        default: ''
+      limit:
+        description: 'Most releases to mirror in this run (0 for no limit)'
+        required: false
+        type: number
+        default: 40
+      dry_run:
+        description: 'Print what would be mirrored and stop'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # Upstream releases new Rubies from 00:30 and 12:30 UTC; catch them a few hours later,
+    # and everything else within three hours.
+    - cron: "0 */3 * * *"
+
+concurrency:
+  group: mirror-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: jdx/ruby
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Mirror releases
+        env:
+          # A RELEASE_TOKEN PAT is optional; it has a higher API rate limit than the built-in
+          # token, which the default limit of 40 releases per run stays within.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          MIRROR_REPO: ${{ github.repository }}
+          MIRROR_TARGET: ${{ github.sha }}
+          ONLY: ${{ inputs.only }}
+          LIMIT: ${{ inputs.limit }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(--limit "${LIMIT:-40}")
+          [[ "$DRY_RUN" == "true" ]] && args+=(--dry-run)
+          # shellcheck disable=SC2086
+          [[ -n "$ONLY" ]] && args+=(--only $ONLY)
+          bash bin/mirror-upstream-releases "${args[@]}"
