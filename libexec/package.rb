@@ -49,7 +49,7 @@ class PortableRubyPackage
     options = { output: "rubies", skip_tests: false }
     parser = OptionParser.new do |opts|
       opts.banner = "Usage: bin/package VERSION --target TARGET --yjit|--no-yjit [--output DIR]"
-      opts.on("--target TARGET", "Target: macos, x86_64_linux, arm64_linux") { |value| options[:target] = value }
+      opts.on("--target TARGET", "Target: x86_64_linux, arm64_linux") { |value| options[:target] = value }
       opts.on("--yjit", "Build Ruby with YJIT") { options[:yjit] = true }
       opts.on("--no-yjit", "Build Ruby without YJIT") { options[:yjit] = false }
       opts.on("--output DIR", "Artifact output directory") { |value| options[:output] = value }

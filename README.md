@@ -8,7 +8,6 @@ Download the appropriate tarball for your platform from the [releases page](http
 
 Release artifacts are named:
 
-- `ruby-VERSION.macos.tar.gz`
 - `ruby-VERSION.x86_64_linux.tar.gz`
 - `ruby-VERSION.x86_64_linux.no_yjit.tar.gz`
 - `ruby-VERSION.arm64_linux.tar.gz`
@@ -27,7 +26,6 @@ Validate recipes and build a tarball with:
 
 ```sh
 bin/validate-recipes
-bin/package 3.4.9 --target macos --yjit --output rubies
 bin/package 3.4.9 --target x86_64_linux --no-yjit --output rubies
 ```
 
@@ -47,8 +45,7 @@ host Ruby hidden from configures that would otherwise use it as baseruby, no bun
 msgpack/bootsnap, and a version-appropriate native gem as the installation test. Ruby 1.8
 predates `--enable-load-relative`, so its `bin/ruby` is a shell wrapper that supplies the
 load path. Every one of these series has been built and tested for `arm64_linux`, and
-2.3.8 and 2.7.8 for `x86_64_linux` as well; macOS is not covered, and OpenSSL 1.0.2 has no
-arm64 macOS configuration at all.
+2.3.8 and 2.7.8 for `x86_64_linux` as well.
 
 Because they are built against glibc 2.17 like everything else here, the tarballs run on
 any Ubuntu LTS from 20.04 (Focal) on, and on other distributions of that vintage or newer.
@@ -86,9 +83,8 @@ dispatches that for every recipe that has no release yet; it runs on a schedule,
 the versions you name instead. On a fresh fork the default means every recipe, so the first
 run is a big one; use `only` to start smaller.
 
-Series can opt out of the macOS build with `macos: false` in `recipes/series.yml`, and out
-of the yjit variants with `yjit: false`; the end-of-life series do both, and release Linux
-`no_yjit` tarballs only.
+Series can opt out of the yjit variants with `yjit: false` in `recipes/series.yml`; the
+end-of-life series do, and release `no_yjit` tarballs only.
 
 No secrets are required. Optional ones:
 

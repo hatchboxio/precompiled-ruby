@@ -30,7 +30,6 @@ defaults:
   yjit: rust                      # rust | false — false also drops the yjit release variant
   test: modern                    # modern | legacy
   test_native_gem: ~
-  macos: true                     # false skips the macOS build in the release workflow
 series:
   # --- Rubies past their end of life ------------------------------------------------------
   # Built for local development, not production. Shared settings: OpenSSL 1.0 or 1.1
@@ -38,8 +37,6 @@ series:
   # their fixnum overflow checks rely on signed overflow wrapping, which GCC exploits from
   # -O2 up (a 1.8.7 built without it evaluates 2**64 to 0); readline through a bundled
   # libedit; no bundled msgpack/bootsnap; a version-appropriate native gem as the test.
-  # None of them is tested on macOS (and OpenSSL 1.0.2 cannot build there at all), so the
-  # release workflow builds them for Linux only.
   "1.8":
     openssl: openssl1.0
     baseruby: none
@@ -56,7 +53,6 @@ series:
     bundled_gems: ~
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: json, version: 1.8.6 }
   "1.9":
     openssl: openssl1.0
@@ -71,7 +67,6 @@ series:
     bundled_gems: ~
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: json, version: 1.8.6 }
   "2.0":
     openssl: openssl1.0
@@ -85,7 +80,6 @@ series:
     bundled_gems: ~
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: json, version: 1.8.6 }
   "2.1":
     openssl: openssl1.0
@@ -98,7 +92,6 @@ series:
     bundled_gems: ~
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: json, version: 1.8.6 }
   "2.2":
     openssl: openssl1.0
@@ -111,7 +104,6 @@ series:
     bundled_gems: ~
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: json, version: 1.8.6 }
   "2.3":
     openssl: openssl1.0
@@ -124,7 +116,6 @@ series:
     bundled_gems: ~
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: json, version: 1.8.6 }
   "2.4":
     openssl: openssl1.1
@@ -137,7 +128,6 @@ series:
     bundled_gems: ~
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "2.5":
     openssl: openssl1.1
@@ -150,7 +140,6 @@ series:
     bundled_gems: ~
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "2.6":
     openssl: openssl1.1
@@ -164,7 +153,6 @@ series:
     mjit_cc: /usr/bin/cc            # MJIT compiles at run time; not with the build's gcc path
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "2.7":
     openssl: openssl1.1
@@ -178,7 +166,6 @@ series:
     mjit_cc: /usr/bin/cc
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "3.0":
     openssl: openssl1.1             # 3.0's openssl extension predates OpenSSL 3
@@ -189,7 +176,6 @@ series:
     mjit_cc: /usr/bin/cc
     yjit: false
     test: legacy
-    macos: false
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "3.1":
     openssl: openssl1.1             # OpenSSL 3 is supported but this keeps 2.4–3.1 uniform
@@ -200,7 +186,6 @@ series:
     mjit_cc: /usr/bin/cc
     yjit: false                     # 3.1's C YJIT was experimental; 3.2 is where it became real
     test: legacy
-    macos: false
     test_native_gem: { name: msgpack, version: 1.4.2 }
   # --- Supported Rubies -------------------------------------------------------------------
   "3.2":

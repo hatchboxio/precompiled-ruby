@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 # Print a Ruby version's effective series settings as key=value lines, for workflows that
-# need to know things like whether the series builds on macOS. Same merge as package.rb.
+# need to know things like whether the series has a yjit variant. Same merge as package.rb.
 require "yaml"
 
 ROOT = File.expand_path("..", __dir__)
@@ -27,7 +27,6 @@ series = deep_merge(series_doc.fetch("defaults"), series_doc.fetch("series").fet
 
 settings = {
   "series" => recipe.fetch("series"),
-  "macos" => series.fetch("macos", true),
   "legacy" => series["test"] == "legacy",
   "yjit" => !!series["yjit"]
 }

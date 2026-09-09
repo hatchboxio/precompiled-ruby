@@ -81,13 +81,13 @@ deps.fetch("dependencies").each do |name, recipe|
   assert valid_url?(recipe["mirror"]), "recipes/dependencies.yml: #{name} has invalid mirror" if recipe["mirror"]
 end
 
-required_targets = Set.new(%w[macos x86_64_linux arm64_linux])
+required_targets = Set.new(%w[x86_64_linux arm64_linux])
 actual_targets = Set.new(targets.fetch("targets").keys)
 assert required_targets.subset?(actual_targets), "recipes/targets.yml: missing targets #{(required_targets - actual_targets).to_a.join(", ")}"
 
 targets.fetch("targets").each do |name, recipe|
   assert recipe["artifact_platform"], "recipes/targets.yml: #{name} missing artifact_platform"
-  assert %w[linux macos].include?(recipe["os"]), "recipes/targets.yml: #{name} has invalid os"
+  assert recipe["os"] == "linux", "recipes/targets.yml: #{name} has invalid os"
   if recipe["os"] == "linux"
     assert recipe["container"].to_s.include?("@sha256:"), "recipes/targets.yml: #{name} container must be digest-pinned"
     assert recipe["max_glibc"].to_s.match?(/\A\d+\.\d+\z/), "recipes/targets.yml: #{name} max_glibc is invalid"
