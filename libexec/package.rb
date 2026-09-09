@@ -109,13 +109,13 @@ class PortableRubyPackage
   end
 
   # Old series have no YJIT worth shipping. The release workflow doesn't ask for the yjit
-  # variant of those, but a hand-run request is honoured by building the same Ruby under
-  # the requested name rather than failing.
+  # variant of those, but a hand-run request is honoured by building the same Ruby rather
+  # than failing; either flag produces the series' single, unsuffixed artifact.
   def validate_yjit!
     return unless yjit
     return if @series["yjit"]
 
-    warn "warning: Ruby #{version} has no supported YJIT; building without it under the --yjit artifact name"
+    warn "warning: Ruby #{version} has no supported YJIT; building without it"
   end
 
   def validate_host!
@@ -1058,7 +1058,9 @@ class PortableRubyPackage
   def package!
     run "chmod", "-R", "u+w", @install_prefix
     platform = @target_recipe.fetch("artifact_platform")
-    yjit_tag = yjit ? "" : ".no_yjit"
+    # The .no_yjit suffix tells the two variants of a series apart. A series without YJIT
+    # has one build, and it takes the plain name that installers such as mise ask for.
+    yjit_tag = yjit || !@series["yjit"] ? "" : ".no_yjit"
     artifact = File.join(output_dir, "ruby-#{version}.#{platform}#{yjit_tag}.tar.gz")
     FileUtils.rm_f(artifact)
     run "tar", "-czf", artifact, "-C", @package_root, "ruby-#{version}"
