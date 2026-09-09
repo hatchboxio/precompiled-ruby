@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          token: ${{ secrets.RELEASE_TOKEN }}
+          # Optional PAT. With the built-in token the push still lands, but doesn't trigger
+          # release-new.yml; its schedule picks the new recipe up instead.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: .ruby-version

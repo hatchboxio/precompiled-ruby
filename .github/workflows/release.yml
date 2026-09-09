@@ -272,10 +272,13 @@ jobs:
     needs: [build, combine-hashes, create-release, provenance, upload-assets, publish-release]
     runs-on: ubuntu-latest
     if: always()
+    env:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
     steps:
       - name: Send email via Resend
+        # Optional: only when the RESEND_API_KEY and NOTIFY_EMAIL secrets are set.
+        if: env.RESEND_API_KEY != ''
         env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           VERSION: ${{ inputs.version }}
         run: |
           REVISION_TAG="${{ needs.create-release.outputs.revision_tag }}"

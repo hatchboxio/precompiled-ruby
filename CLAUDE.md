@@ -40,6 +40,7 @@ YJIT builds require `rustup` or `rustc` in `PATH`. Set `JDX_RUBY_RUSTUP_HOME` to
 - `bin/validate-recipes`: Validates YAML shape, required fields, duplicate versions, URL/SHA256 formats, and target matrix completeness.
 - `bin/update-ruby-recipe`: Adds or updates a Ruby entry in `recipes/rubies.yml`; used by autobump.
 - `bin/package-linux`: Runs `bin/package` for a Linux target inside its pinned manylinux2014 container, mirroring the build workflow, for local Linux builds.
+- `bin/recipe-info`: Prints a version's effective series settings (`macos`, `legacy`, ...) for workflows.
 
 ### Old series
 

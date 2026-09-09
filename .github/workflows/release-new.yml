@@ -14,6 +14,11 @@ on:
         required: false
         type: boolean
         default: false
+      only:
+        description: 'Release exactly these versions, space-separated, whether or not they have a release'
+        required: false
+        type: string
+        default: ''
   schedule:
     - cron: "30 */12 * * *"
 
@@ -21,8 +26,12 @@ concurrency:
   group: release-new
   cancel-in-progress: false
 
+# actions: write lets the built-in token dispatch release.yml. A RELEASE_TOKEN secret is
+# optional; set one (a PAT with contents and actions write) if you want autobump's pushes to
+# trigger this workflow, which pushes made with the built-in token never do.
 permissions:
   contents: write
+  actions: write
 
 jobs:
   check-and-release:
@@ -54,6 +63,18 @@ jobs:
             echo "Found versions without releases: $versions_to_release"
           fi
 
+          if [[ -n "${{ inputs.only }}" ]]; then
+            versions_to_release=""
+            for version in ${{ inputs.only }}; do
+              if echo "$recipe_versions" | grep -q "^${version}$"; then
+                versions_to_release="$versions_to_release $version"
+              else
+                echo "No recipe for $version, skipping"
+              fi
+            done
+            echo "Releasing only: $versions_to_release"
+          fi
+
           versions_json=$(echo $versions_to_release | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -s -c .)
           echo "versions=$versions_json" >> "$GITHUB_OUTPUT"
 
@@ -64,7 +85,7 @@ jobs:
       - name: Trigger releases
         if: steps.find-versions.outputs.versions != '[]'
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
           versions='${{ steps.find-versions.outputs.versions }}'
           latest_stable='${{ steps.find-versions.outputs.latest_stable }}'
