@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Copy upstream's published releases into this repository, assets and all, so that this
+# repository's releases are a superset of upstream's. .github/workflows/mirror-upstream.yml
+# runs this on a schedule; it also works from a laptop with `gh auth login`.
+#
+#   bin/mirror-upstream-releases                 # everything upstream has that we don't
+#   bin/mirror-upstream-releases --dry-run       # print the plan, change nothing
+#   bin/mirror-upstream-releases --limit 20      # at most 20 releases this run
+#   bin/mirror-upstream-releases --only 3.4.10 3.4.10-2   # exactly these, replacing ours
+#
+#   UPSTREAM_REPO   owner/repo to copy from        (default jdx/ruby)
+#   MIRROR_REPO     owner/repo to copy into        (default GITHUB_REPOSITORY or origin)
+#   MIRROR_TARGET   commit the release tag points at (default the mirror repo's HEAD)
+#   GITHUB_TOKEN    used by gh for both repositories
+#
+# What counts as new: an upstream release whose tag this repository has no release for.
+# Drafts here are left alone unless they are this script's own (marked "Mirrored from"),
+# which are a mirror that died halfway and get redone. Upstream re-publishes a floating
+# release (3.4.9) whenever it adds a build revision (3.4.9-5), so mirroring a revision
+# also refreshes its floating release. Everything is processed oldest first, so a run cut
+# short by --limit or a failure is continued by the next one.
+set -euo pipefail
+
+upstream=${UPSTREAM_REPO:-jdx/ruby}
+mirror=${MIRROR_REPO:-${GITHUB_REPOSITORY:-}}
+if [ -z "$mirror" ]; then
+  mirror=$(git -C "$(dirname "$0")/.." remote get-url origin 2>/dev/null |
+    sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##') || true
+fi
+[ -n "$mirror" ] || { echo "error: set MIRROR_REPO=owner/repo" >&2; exit 1; }
+
+dry_run=false
+limit=0
+only=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --dry-run) dry_run=true; shift ;;
+    --limit) limit=${2:?--limit needs a number}; shift 2 ;;
+    --only) shift; while [ $# -gt 0 ] && [[ $1 != --* ]]; do only+=("$1"); shift; done ;;
+    -h|--help) sed -n '2,20p' "$0" | cut -c3-; exit 0 ;;
+    *) echo "error: unknown argument $1" >&2; exit 1 ;;
+  esac
+done
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+echo "Mirroring $upstream -> $mirror"
+
+# Upstream's published releases, oldest first. Drafts are invisible to us anyway, but say so.
+gh release list --repo "$upstream" --limit 1000 --exclude-drafts \
+  --json tagName,isPrerelease,isLatest,publishedAt \
+  --jq 'sort_by(.publishedAt) | .[] | [.tagName, .isPrerelease, .isLatest] | @tsv' > "$work/upstream.tsv"
+[ -s "$work/upstream.tsv" ] || { echo "error: no published releases found in $upstream" >&2; exit 1; }
+
+# Ours, drafts included: tag, draft?, mirrored-by-us?, id
+gh api "repos/$mirror/releases" --paginate \
+  --jq '.[] | [.tag_name, .draft, ((.body // "") | contains("Mirrored from ")), .id] | @tsv' > "$work/mirror.tsv"
+
+upstream_has() { cut -f1 "$work/upstream.tsv" | grep -qxF -- "$1"; }
+mirror_row()   { awk -F'\t' -v t="$1" '$1 == t' "$work/mirror.tsv" | head -1; }
+foreign_draft() { [ "$(cut -f2 <<<"$1")" = true ] && [ "$(cut -f3 <<<"$1")" != true ]; }
+
+# Build the plan: "tag<TAB>reason".
+: > "$work/plan.tsv"
+if [ ${#only[@]} -gt 0 ]; then
+  for tag in "${only[@]}"; do
+    if upstream_has "$tag"; then
+      printf '%s\treplace\n' "$tag" >> "$work/plan.tsv"
+    else
+      echo "No published release $tag in $upstream, skipping"
+    fi
+  done
+else
+  while IFS=$'\t' read -r tag _; do
+    row=$(mirror_row "$tag")
+    if [ -z "$row" ]; then
+      printf '%s\tnew\n' "$tag" >> "$work/plan.tsv"
+    elif foreign_draft "$row"; then
+      echo "Skipping $tag: a draft release that is not ours (a release in progress?)"
+    elif [ "$(cut -f2 <<<"$row")" = true ]; then
+      printf '%s\tretry\n' "$tag" >> "$work/plan.tsv"
+    fi
+  done < "$work/upstream.tsv"
+
+  # A new build revision means upstream re-published the floating release with its assets.
+  cp "$work/plan.tsv" "$work/new.tsv"
+  while IFS=$'\t' read -r tag _; do
+    [[ $tag =~ -[0-9]+$ ]] || continue
+    base=${tag%-[0-9]*}
+    upstream_has "$base" || continue
+    grep -qxF -- "$base" <(cut -f1 "$work/plan.tsv") && continue
+    row=$(mirror_row "$base")
+    [ -n "$row" ] && foreign_draft "$row" && continue
+    printf '%s\trefresh\n' "$base" >> "$work/plan.tsv"
+  done < "$work/new.tsv"
+fi
+
+total=$(wc -l < "$work/plan.tsv")
+if [ "$total" -eq 0 ]; then
+  echo "Nothing to mirror: $mirror already has every published release of $upstream"
+  exit 0
+fi
+if [ "$limit" -gt 0 ] && [ "$total" -gt "$limit" ]; then
+  echo "Plan has $total releases; doing the first $limit this run, the rest next time"
+  head -n "$limit" "$work/plan.tsv" > "$work/plan.cut" && mv "$work/plan.cut" "$work/plan.tsv"
+fi
+echo "Plan:"
+sed 's/^/  /' "$work/plan.tsv"
+$dry_run && { echo "Dry run, nothing changed"; exit 0; }
+
+target=${MIRROR_TARGET:-$(gh api "repos/$mirror/commits/HEAD" --jq .sha)}
+
+mirror_one() {
+  local tag=$1 reason=$2 dir="$work/$tag"
+  local flags name prerelease latest
+  echo "::group::$reason $tag"
+  mkdir -p "$dir"
+
+  gh api "repos/$upstream/releases/tags/$tag" > "$dir/release.json"
+  name=$(jq -r '.name // .tag_name' "$dir/release.json")
+  prerelease=$(jq -r '.prerelease' "$dir/release.json")
+  latest=$(awk -F'\t' -v t="$tag" '$1 == t { print $3 }' "$work/upstream.tsv")
+
+  gh release download "$tag" --repo "$upstream" --dir "$dir/assets"
+  [ -n "$(ls -A "$dir/assets")" ] || { echo "error: $upstream release $tag has no assets" >&2; return 1; }
+  # GitHub records a sha256 per asset on recent uploads; check the ones it has.
+  jq -r '.assets[] | select(.digest != null) | "\(.digest | sub("^sha256:"; ""))  \(.name)"' \
+    "$dir/release.json" > "$dir/SHA256SUMS"
+  if [ -s "$dir/SHA256SUMS" ]; then
+    (cd "$dir/assets" && sha256sum --check --strict --quiet ../SHA256SUMS)
+  fi
+  ls -l "$dir/assets" | sed 1d
+
+  {
+    jq -r '.body // ""' "$dir/release.json"
+    echo
+    echo "Mirrored from https://github.com/$upstream/releases/tag/$tag"
+  } > "$dir/notes.md"
+
+  # Same as release.yml: clear every release under this tag, then the tag, then recreate.
+  for id in $(awk -F'\t' -v t="$tag" '$1 == t { print $4 }' "$work/mirror.tsv"); do
+    echo "Deleting existing release $id for $tag"
+    gh api -X DELETE "repos/$mirror/releases/$id"
+  done
+  gh api -X DELETE "repos/$mirror/git/refs/tags/$tag" 2>/dev/null || true
+
+  flags=(--latest=false)
+  [ "$prerelease" = true ] && flags+=(--prerelease)
+  gh release create "$tag" --repo "$mirror" --draft --target "$target" --title "$name" \
+    --notes-file "$dir/notes.md" "${flags[@]}"
+  gh release upload "$tag" "$dir"/assets/* --repo "$mirror" --clobber
+  [ "$latest" = true ] && flags=(--latest "${flags[@]:1}")
+  gh release edit "$tag" --repo "$mirror" --draft=false "${flags[@]}"
+
+  rm -rf "$dir"
+  echo "::endgroup::"
+}
+
+done_count=0
+while IFS=$'\t' read -r tag reason; do
+  mirror_one "$tag" "$reason"
+  done_count=$((done_count + 1))
+done < "$work/plan.tsv"
+echo "Mirrored $done_count release(s) from $upstream into $mirror"
