@@ -19,6 +19,12 @@ on:
         type: boolean
         default: false
 
+env:
+  # Revision releases of a version to keep after publishing a new one: the current build
+  # and the previous one, so a bad rebuild can be rolled back by re-pointing the floating
+  # release at the previous revision. Older ones are deleted by bin/prune-revisions.
+  KEEP_REVISIONS: "2"
+
 # Prevent multiple releases of the same version from running simultaneously
 concurrency:
   group: release-${{ inputs.version }}
@@ -301,6 +307,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
       GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Download artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -412,6 +420,11 @@ jobs:
           # Move the floating tag to the commit this build came from.
           gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/${VERSION}" \
             -f sha="${{ github.sha }}" -F force=true > /dev/null
+
+      - name: Prune old revision releases
+        # Only after the floating release points at the new build, so the revisions being
+        # deleted are never the one it serves.
+        run: bin/prune-revisions "${VERSION}" --keep "${KEEP_REVISIONS}"
 
   notify:
     needs: [plan, build, combine-hashes, create-release, provenance, upload-assets, publish-release]

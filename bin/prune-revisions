@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Delete a version's oldest revision releases, and their tags, keeping the newest few. The
+# floating release (the bare version) is never touched.
+#
+#   bin/prune-revisions 3.4.9            # keep the newest 2 revisions of 3.4.9
+#   bin/prune-revisions 3.4.9 --keep 3
+#   bin/prune-revisions 3.4.9 --dry-run  # only print what would go
+#
+# Uses gh; set GH_REPO to target a repository other than the current checkout's.
+set -euo pipefail
+
+version=""
+keep=2
+dry_run=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --keep) keep="$2"; shift 2 ;;
+    --keep=*) keep="${1#--keep=}"; shift ;;
+    --dry-run) dry_run=true; shift ;;
+    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) version="$1"; shift ;;
+  esac
+done
+[[ -n "$version" ]] || { echo "usage: bin/prune-revisions VERSION [--keep N] [--dry-run]" >&2; exit 2; }
+[[ "$keep" =~ ^[0-9]+$ && "$keep" -ge 1 ]] || { echo "--keep must be a positive integer" >&2; exit 2; }
+
+repo="${GH_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+escaped="$(printf '%s' "$version" | sed 's/[.]/\\./g')"
+
+# Revision tags of this version, oldest first, from the full release list (drafts excluded).
+revisions="$(gh api "repos/${repo}/releases" --paginate --jq '.[] | select(.draft | not) | .tag_name' \
+  | { grep -E "^${escaped}-[0-9]+$" || true; } \
+  | sed "s/^${escaped}-//" | sort -n | sed "s/^/${version}-/")"
+
+total=$(printf '%s\n' "$revisions" | grep -c . || true)
+if [[ "$total" -le "$keep" ]]; then
+  echo "${version}: ${total} revision release(s), nothing to prune"
+  exit 0
+fi
+
+printf '%s\n' "$revisions" | head -n "$((total - keep))" | while read -r tag; do
+  if [[ "$dry_run" == "true" ]]; then
+    echo "would delete ${tag}"
+  else
+    echo "deleting ${tag}"
+    gh release delete "$tag" --repo "$repo" --yes --cleanup-tag
+  fi
+done

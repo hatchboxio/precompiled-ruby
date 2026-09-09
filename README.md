@@ -80,6 +80,11 @@ packaging script and the build workflow), and a run whose fingerprint matches th
 revision's exits after its first job. Tick `force` to rebuild anyway, for example when a
 pinned container or the Rust toolchain is the reason.
 
+Each version keeps its two newest revision releases, the current build and the previous one
+for rollback; older revisions and their tags are deleted after a publish (`bin/prune-revisions`,
+`KEEP_REVISIONS` in the workflow). The floating release is never pruned. A mise lockfile that
+pins a pruned revision falls back to the newest one.
+
 [Release New Versions](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/release-new.yml)
 dispatches that for every recipe that has no release yet; it runs on a schedule, when
 `recipes/rubies.yml` changes on `main`, or by hand, where its `only` input releases exactly
