@@ -28,6 +28,8 @@ jobs:
           ruby -c libexec/package.rb
           ruby -c libexec/validate_recipes.rb
           ruby -c libexec/update_ruby_recipe.rb
+          bash -n bin/package-linux
+          bash -n bin/mirror-upstream-releases
 
   build:
     needs: syntax

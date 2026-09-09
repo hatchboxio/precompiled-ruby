@@ -33,6 +33,11 @@ permissions:
   contents: write
   actions: write
 
+env:
+  # Versions this repository has a recipe for are left to mirror-upstream.yml, which copies
+  # upstream's builds of them here. Set to '' to build everything from our own recipes.
+  UPSTREAM_REPO: jdx/ruby
+
 jobs:
   check-and-release:
     runs-on: ubuntu-latest
@@ -49,13 +54,29 @@ jobs:
         run: |
           recipe_versions=$(ruby -ryaml -e 'puts YAML.load_file("recipes/rubies.yml").fetch("rubies").keys')
 
+          # Anything upstream has a recipe for, upstream builds; mirror-upstream.yml copies it here.
+          upstream_versions=""
+          if [[ -n "$UPSTREAM_REPO" ]]; then
+            gh api "repos/${UPSTREAM_REPO}/contents/recipes/rubies.yml" -H 'Accept: application/vnd.github.raw' > /tmp/upstream-rubies.yml
+            upstream_versions=$(ruby -ryaml -e 'puts YAML.load_file("/tmp/upstream-rubies.yml").fetch("rubies").keys')
+            echo "Leaving to the upstream mirror: $(echo $upstream_versions | tr '\n' ' ')"
+          fi
+
           if [[ "${{ inputs.replace_all }}" == "true" ]]; then
-            versions_to_release="$recipe_versions"
-            echo "Replacing all releases"
-          else
-            existing_releases=$(gh release list --limit 100 --json tagName --jq '.[].tagName' || true)
             versions_to_release=""
             for version in $recipe_versions; do
+              if ! echo "$upstream_versions" | grep -q "^${version}$"; then
+                versions_to_release="$versions_to_release $version"
+              fi
+            done
+            echo "Replacing all releases built here: $versions_to_release"
+          else
+            existing_releases=$(gh release list --limit 1000 --json tagName --jq '.[].tagName' || true)
+            versions_to_release=""
+            for version in $recipe_versions; do
+              if echo "$upstream_versions" | grep -q "^${version}$"; then
+                continue
+              fi
               if ! echo "$existing_releases" | grep -q "^${version}$"; then
                 versions_to_release="$versions_to_release $version"
               fi
