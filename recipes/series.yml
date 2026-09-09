@@ -27,7 +27,7 @@ defaults:
   rubygems: ~                     # dependency to install RubyGems from, for Rubies without it
   bundler: []                     # bundler versions to gem install
   mjit_cc: ~
-  yjit: rust                      # rust | c (3.1) | false
+  yjit: rust                      # rust | false — false also drops the yjit release variant
   test: modern                    # modern | legacy
   test_native_gem: ~
   macos: true                     # false skips the macOS build in the release workflow
@@ -198,7 +198,7 @@ series:
     extra_out_ext: [gdbm, dbm]
     bundled_gems: ~
     mjit_cc: /usr/bin/cc
-    yjit: c                         # YJIT was C in 3.1; no Rust needed
+    yjit: false                     # 3.1's C YJIT was experimental; 3.2 is where it became real
     test: legacy
     macos: false
     test_native_gem: { name: msgpack, version: 1.4.2 }

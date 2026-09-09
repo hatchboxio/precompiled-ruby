@@ -23,13 +23,15 @@ env:
   BOOTSTRAP_VERSION: "3.4.7"
 
 jobs:
-  # What this version's series allows: old series build for Linux only, and get a smoke
-  # test their stdlib can pass. See recipes/series.yml.
+  # What this version's series allows: old series build for Linux only, without a yjit
+  # variant, and get a smoke test their stdlib can pass. See recipes/series.yml.
   plan:
     runs-on: ubuntu-latest
     outputs:
       macos: ${{ steps.info.outputs.macos }}
       legacy: ${{ steps.info.outputs.legacy }}
+      yjit: ${{ steps.info.outputs.yjit }}
+      linux-matrix: ${{ steps.matrix.outputs.linux }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ruby/setup-ruby@v1
@@ -37,11 +39,23 @@ jobs:
           ruby-version: .ruby-version
       - id: info
         run: bin/recipe-info "${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+      - id: matrix
+        env:
+          YJIT: ${{ steps.info.outputs.yjit }}
+        run: |
+          # Both variants per target when the series has YJIT, otherwise no_yjit only.
+          if [[ "$YJIT" == "true" ]]; then yjits='[true, false]'; else yjits='[false]'; fi
+          echo "linux=$(jq -c -n --argjson yjits "$yjits" '{include: [
+            {runner: "ubuntu-22.04",     target: "x86_64_linux"},
+            {runner: "ubuntu-22.04-arm", target: "arm64_linux"}
+          ] | map(. as $t | $yjits[] | $t + {yjit: .})}')" >> "$GITHUB_OUTPUT"
 
   build-macos:
     needs: plan
     if: needs.plan.outputs.macos == 'true'
     runs-on: macos-14
+    env:
+      YJIT: ${{ needs.plan.outputs.yjit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -59,12 +73,14 @@ jobs:
         env:
           JDX_RUBY_BASERUBY: ${{ steps.setup-ruby.outputs.ruby-prefix }}/bin/ruby
           JDX_RUBY_RUSTUP_HOME: ${{ github.workspace }}/.build/rustup-macos
-        run: bin/package "${{ inputs.version }}" --target macos --yjit --output rubies
+        run: |
+          if [[ "$YJIT" == "true" ]]; then yjit_arg="--yjit"; else yjit_arg="--no-yjit"; fi
+          bin/package "${{ inputs.version }}" --target macos "$yjit_arg" --output rubies
 
       - name: Upload portable Ruby
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ruby-${{ inputs.version }}-macos-yjit-true
+          name: ruby-${{ inputs.version }}-macos-yjit-${{ needs.plan.outputs.yjit }}
           path: rubies/
 
       - name: Test portable Ruby
@@ -72,27 +88,14 @@ jobs:
           mkdir -p portable-ruby
           tar --strip-components 1 -C portable-ruby -xf rubies/*.tar.gz
           export PATH="${PWD}/portable-ruby/bin:${PATH}"
-          ruby --version --yjit
+          if [[ "$YJIT" == "true" ]]; then ruby --version --yjit; else ruby --version; fi
           ruby -r debug -r bigdecimal -r json -r yaml -r reline -e "true"
 
   build-linux:
     needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            target: x86_64_linux
-            yjit: true
-          - runner: ubuntu-22.04
-            target: x86_64_linux
-            yjit: false
-          - runner: ubuntu-22.04-arm
-            target: arm64_linux
-            yjit: true
-          - runner: ubuntu-22.04-arm
-            target: arm64_linux
-            yjit: false
+      matrix: ${{ fromJson(needs.plan.outputs.linux-matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -172,7 +175,7 @@ jobs:
           mkdir -p portable-ruby
           tar --strip-components 1 -C portable-ruby -xf rubies/*.tar.gz
           export PATH="${PWD}/portable-ruby/bin:${PATH}"
-          if [[ "${{ matrix.yjit }}" == "true" && "$LEGACY" != "true" ]]; then
+          if [[ "${{ matrix.yjit }}" == "true" ]]; then
             ruby --version --yjit
           else
             ruby --version
