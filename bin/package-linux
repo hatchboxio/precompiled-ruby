@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Run bin/package for a Linux target inside its pinned manylinux2014 container, the way
+# .github/workflows/build.yml does, so a Linux tarball can be built and tested locally.
+#
+#   bin/package-linux 3.4.9 x86_64_linux --no-yjit
+#   bin/package-linux 2.7.8 arm64_linux --no-yjit
+#
+# The first run per target builds a derived image with the workflow's yum packages and
+# bootstrap Ruby installed; later runs reuse it. Artifacts land in rubies/ as usual, and
+# .cache/ is shared with the container so downloads are reused.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+version=${1:-}
+target=${2:-}
+yjit=${3:---no-yjit}
+[ -n "$version" ] && [ -n "$target" ] || { sed -n '2,7p' "$0" | cut -c3-; exit 1; }
+
+container=$(ruby -ryaml -e 'puts YAML.load_file("recipes/targets.yml").fetch("targets").fetch(ARGV[0]).fetch("container")' "$target")
+case $target in
+  x86_64_linux) platform=linux/amd64 ;;
+  arm64_linux)  platform=linux/arm64 ;;
+  *) echo "error: Linux targets are x86_64_linux and arm64_linux" >&2; exit 1 ;;
+esac
+
+# Same bootstrap the workflow uses: a released portable Ruby, so the container needs no
+# system Ruby at all. Pin it here rather than reading the workflow; keep the two in step.
+bootstrap_version=3.4.7
+image="precompiled-ruby-build:${target}-${bootstrap_version}"
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "Building $image from $container..."
+  docker buildx build --platform "$platform" -t "$image" --load - <<DOCKERFILE
+FROM $container
+RUN yum install -y curl tar gzip xz make gcc gcc-c++ perl perl-IPC-Cmd perl-Time-Piece patch file findutils diffutils which git binutils \\
+    && yum clean all
+RUN mkdir -p /opt/bootstrap-ruby \\
+    && curl -fL --retry 3 -o /tmp/bootstrap-ruby.tar.gz \\
+         "https://github.com/jdx/ruby/releases/download/${bootstrap_version}/ruby-${bootstrap_version}.${target}.no_yjit.tar.gz" \\
+    && tar -xzf /tmp/bootstrap-ruby.tar.gz -C /opt/bootstrap-ruby --strip-components 1 \\
+    && rm /tmp/bootstrap-ruby.tar.gz
+ENV PATH=/opt/bootstrap-ruby/bin:\$PATH
+DOCKERFILE
+fi
+
+mkdir -p rubies .cache
+
+# The build happens on a Linux filesystem, not on the bind mount: the tree is copied in,
+# .build/ lives on a named volume, and only the download cache and the output directory
+# are shared with the host. Bind mounts from macOS are slow and not quite a Linux
+# filesystem — libffi's generated Makefile came out unreadable on one — and CI builds on
+# a native one. The volume keeps a failed build's tree around for inspection:
+#
+#   docker run --rm -it -v precompiled-ruby-build-$target:/work/.build $image bash
+docker run --rm --platform "$platform" \
+  -v "$PWD:/src:ro" -v "$PWD/.cache:/work/.cache" -v "$PWD/rubies:/work/rubies" \
+  -v "precompiled-ruby-build-${target}:/work/.build" \
+  -e JDX_RUBY_RUSTUP_HOME="/work/.build/rustup-${target}" -e JDX_RUBY_JOBS \
+  "$image" /bin/bash -lc "
+    set -euo pipefail
+    (cd /src && tar --exclude=./.build --exclude=./.cache --exclude=./rubies --exclude=./.git -cf - .) | (cd /work && tar -xf -)
+    cd /work
+    if [[ '$yjit' == --yjit ]] && ! command -v rustup >/dev/null; then
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+      export PATH=\"\$HOME/.cargo/bin:\$PATH\"
+    fi
+    bin/package '$version' --target '$target' '$yjit' --output rubies
+    chown -R \"\$(stat -c %u /src):\$(stat -c %g /src)\" rubies .cache || true
+  "

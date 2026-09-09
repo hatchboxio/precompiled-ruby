@@ -14,6 +14,22 @@ dependencies:
     url: https://github.com/openssl/openssl/releases/download/openssl-3.5.5/openssl-3.5.5.tar.gz
     mirror: https://www.openssl.org/source/openssl-3.5.5.tar.gz
     sha256: b28c91532a8b65a1f983b4c28b7488174e4a01008e29ce8e69bd789f28bc2a89
+  # For Rubies whose openssl extension predates OpenSSL 3 (up to 3.0) or 1.1 (up to 2.3).
+  openssl1.1:
+    version: 1.1.1w
+    url: https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+    mirror: https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1w/openssl-1.1.1w.tar.gz
+    sha256: cf3098950cb4d853ad95c0841f1f9c6d3dc102dccfcacd521d93925208b76ac8
+  openssl1.0:
+    version: 1.0.2u
+    url: https://www.openssl.org/source/openssl-1.0.2u.tar.gz
+    mirror: https://github.com/openssl/openssl/releases/download/OpenSSL_1_0_2u/openssl-1.0.2u.tar.gz
+    sha256: ecd0c6ffb493dd06707d38b14bb4d8c2288bb7033735606569d8f90f89669d16
+  # Ruby 1.8 ships without RubyGems.
+  rubygems1.8:
+    version: 1.8.23
+    url: https://rubygems.org/rubygems/rubygems-1.8.23.tgz
+    sha256: e4a1c6bbaac411eaab94deae78228b7584033a1f10a022f52bffa9613aa29061
   cacert:
     version: "2025-07-15"
     url: https://curl.se/ca/cacert-2025-07-15.pem

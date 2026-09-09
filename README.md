@@ -31,7 +31,30 @@ bin/package 3.4.9 --target macos --yjit --output rubies
 bin/package 3.4.9 --target x86_64_linux --no-yjit --output rubies
 ```
 
+`bin/package-linux VERSION TARGET [--yjit|--no-yjit]` runs the same thing inside the pinned
+manylinux2014 container for a Linux target, the way CI does, so a Linux tarball can be built
+and tested locally without a Linux machine.
+
 Linux release builds are expected to run in the pinned manylinux2014 containers from `recipes/targets.yml`. Builds need a baseruby of Ruby 3.0.0 or newer; set `JDX_RUBY_BASERUBY` when your shell default is older. Ruby 3.2 builds require `JDX_RUBY_BASERUBY` to match the exact version being built. YJIT builds use rustup/rustc from `PATH`, with optional `JDX_RUBY_RUSTUP_HOME`.
+
+## End-of-life Rubies
+
+Ruby 1.8.7 through 3.1 are in the recipes as well, for local development against old
+applications; they are not for production use. They build the same relocatable way, with
+a few differences that `recipes/series.yml` spells out per series: OpenSSL 1.0.2 or 1.1.1
+where the openssl extension predates OpenSSL 3, readline through a bundled libedit, the
+host Ruby hidden from configures that would otherwise use it as baseruby, no bundled
+msgpack/bootsnap, and a version-appropriate native gem as the installation test. Ruby 1.8
+predates `--enable-load-relative`, so its `bin/ruby` is a shell wrapper that supplies the
+load path. Every one of these series has been built and tested for `arm64_linux`, and
+2.3.8 and 2.7.8 for `x86_64_linux` as well; macOS is not covered, and OpenSSL 1.0.2 has no
+arm64 macOS configuration at all.
+
+Because they are built against glibc 2.17 like everything else here, the tarballs run on
+any Ubuntu LTS from 20.04 (Focal) on, and on other distributions of that vintage or newer.
+
+`--yjit` on a series without YJIT prints a warning and builds without it under the
+requested artifact name, so the release matrix still produces every file it expects.
 
 ## SSL certificates
 
