@@ -53,7 +53,10 @@ jobs:
             versions_to_release="$recipe_versions"
             echo "Replacing all releases"
           else
-            existing_releases=$(gh release list --limit 100 --json tagName --jq '.[].tagName' || true)
+            # Every published release, not just the newest page: with more than 100 releases
+            # in the repository, a capped list reports old versions as missing and rebuilds
+            # them, which pushes other versions out of the window on the next run.
+            existing_releases=$(gh api "repos/${{ github.repository }}/releases" --paginate --jq '.[] | select(.draft | not) | .tag_name' || true)
             versions_to_release=""
             for version in $recipe_versions; do
               if ! echo "$existing_releases" | grep -q "^${version}$"; then

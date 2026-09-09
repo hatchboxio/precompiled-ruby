@@ -73,6 +73,13 @@ These Rubies use the first available certificate source in this order:
 [An automated release workflow is available to use](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/release.yml).
 Dispatch the workflow with a Ruby version and it will build, upload SLSA provenance, publish an immutable build revision release (e.g. `3.4.7-2`), and then re-point the floating release (e.g. `3.4.7`) at that build. The floating release is updated in place rather than recreated, so its download URLs keep working while a rebuild is in flight or if one fails; new assets are renamed over the old ones rather than re-uploaded in place.
 
+A dispatched release only builds when something that affects the build has changed. Each
+revision release records a build fingerprint (`bin/build-fingerprint VERSION`: the version's
+recipe, its effective series settings, dependency versions and checksums, the targets, the
+packaging script and the build workflow), and a run whose fingerprint matches the newest
+revision's exits after its first job. Tick `force` to rebuild anyway, for example when a
+pinned container or the Rust toolchain is the reason.
+
 [Release New Versions](https://github.com/hatchboxio/precompiled-ruby/actions/workflows/release-new.yml)
 dispatches that for every recipe that has no release yet; it runs on a schedule, when
 `recipes/rubies.yml` changes on `main`, or by hand, where its `only` input releases exactly
