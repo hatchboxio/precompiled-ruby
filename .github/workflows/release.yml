@@ -263,7 +263,9 @@ jobs:
         run: |
           # The floating release (e.g., 3.4.5) always serves the latest build of a version.
           # It is updated in place, never deleted, so its download URLs keep working
-          # throughout a rebuild: at worst a single asset is briefly replaced.
+          # throughout a rebuild. New assets are uploaded under a temporary name and then
+          # renamed over the old ones, so each URL is missing for one API call at most
+          # rather than for the whole re-upload.
           if echo "${VERSION}" | grep -qiE '(preview|rc)'; then
             prerelease_flag="--prerelease"
           else
@@ -284,37 +286,61 @@ jobs:
             gh api -X DELETE "repos/${GH_REPO}/releases/$release_id"
           done
 
+          files=(*.tar.gz *.intoto.jsonl)
           release_id="$(gh api "repos/${GH_REPO}/releases" --paginate --jq ".[] | select((.draft | not) and .tag_name == \"${VERSION}\") | .id" | head -1)"
+
           if [[ -z "$release_id" ]]; then
             echo "Creating floating release ${VERSION}"
+            # Draft first so the release only becomes visible with all of its assets.
             gh release create "${VERSION}" \
+              --draft \
               --notes-file /tmp/release_notes.md \
               --target "${{ github.sha }}" \
               --title "${VERSION}" \
               $latest_flag \
               $prerelease_flag \
-              *.tar.gz *.intoto.jsonl
+              "${files[@]}"
+            gh release edit "${VERSION}" --draft=false $latest_flag $prerelease_flag
           else
             echo "Updating floating release ${VERSION} (id $release_id) in place"
-            gh release upload "${VERSION}" *.tar.gz *.intoto.jsonl --clobber
+            assets_url="repos/${GH_REPO}/releases/${release_id}/assets"
+
+            # Remove anything this build does not produce: assets of targets that were
+            # dropped, and temporary names left behind by an interrupted run.
+            for asset in $(gh api "$assets_url" --paginate --jq '.[] | "\(.id):\(.name)"'); do
+              asset_name="${asset#*:}"
+              if [[ ! -e "$asset_name" ]]; then
+                echo "Deleting stale asset ${asset_name}"
+                gh api -X DELETE "repos/${GH_REPO}/releases/assets/${asset%%:*}"
+              fi
+            done
+
+            mkdir -p /tmp/incoming
+            for f in "${files[@]}"; do
+              cp "$f" "/tmp/incoming/${f}.incoming"
+            done
+            gh release upload "${VERSION}" /tmp/incoming/*.incoming
+
+            assets="$(gh api "$assets_url" --paginate --jq '.[] | "\(.id):\(.name)"')"
+            for f in "${files[@]}"; do
+              new_id="$(grep ":${f}.incoming\$" <<<"$assets" | cut -d: -f1)"
+              old_id="$(grep ":${f}\$" <<<"$assets" | cut -d: -f1 || true)"
+              if [[ -n "$old_id" ]]; then
+                gh api -X PATCH "repos/${GH_REPO}/releases/assets/${old_id}" -f name="${f}.previous" > /dev/null
+              fi
+              gh api -X PATCH "repos/${GH_REPO}/releases/assets/${new_id}" -f name="${f}" > /dev/null
+              if [[ -n "$old_id" ]]; then
+                gh api -X DELETE "repos/${GH_REPO}/releases/assets/${old_id}"
+              fi
+              echo "Swapped ${f}"
+            done
+
             gh release edit "${VERSION}" \
               --notes-file /tmp/release_notes.md \
               --title "${VERSION}" \
               --draft=false \
               $latest_flag \
               $prerelease_flag
-
-            # Remove assets from an earlier build that this build no longer produces
-            # (e.g., a target that was dropped), so the floating release only ever
-            # serves files from a single revision.
-            for asset in $(gh api "repos/${GH_REPO}/releases/${release_id}/assets" --paginate --jq '.[] | "\(.id):\(.name)"'); do
-              asset_id="${asset%%:*}"
-              asset_name="${asset#*:}"
-              if [[ ! -e "$asset_name" ]]; then
-                echo "Deleting stale asset ${asset_name}"
-                gh api -X DELETE "repos/${GH_REPO}/releases/assets/${asset_id}"
-              fi
-            done
           fi
 
           # Move the floating tag to the commit this build came from.
