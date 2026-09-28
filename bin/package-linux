@@ -29,7 +29,7 @@ esac
 # BOOTSTRAP_REPO can point at any repository with that release, this one included once it
 # has released 3.4.7.
 bootstrap_version=3.4.7
-bootstrap_repo=${BOOTSTRAP_REPO:-jdx/ruby}
+bootstrap_repo=${BOOTSTRAP_REPO:-hatchboxio/precompiled-ruby}
 image="precompiled-ruby-build:${target}-${bootstrap_version}"
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
