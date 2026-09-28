@@ -19,7 +19,7 @@ env:
   # Where the bootstrap Ruby that runs bin/package inside the manylinux containers comes
   # from. Any repository with a released ruby-3.4.7.<target>.no_yjit.tar.gz will do; switch
   # this to your own once it has one.
-  BOOTSTRAP_REPO: jdx/ruby
+  BOOTSTRAP_REPO: hatchboxio/precompiled-ruby
   BOOTSTRAP_VERSION: "3.4.7"
 
 jobs:
