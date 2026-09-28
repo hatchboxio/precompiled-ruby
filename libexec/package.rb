@@ -655,6 +655,11 @@ class PortableRubyPackage
     if linux?
       cppflags << "-I#{File.join(dep_prefix("libxcrypt"), "include")}"
       ldflags << "-L#{File.join(dep_prefix("libxcrypt"), "lib")}"
+      # The static OpenSSL linked into openssl.so would otherwise be exported unversioned,
+      # and a system libpq (pg gem) binds its OpenSSL 3 calls to it: an OpenSSL 1.x series
+      # segfaults or fails its handshakes. Hiding them also keeps openssl.so on its own copy
+      # when libssl.so.3 loads first. rbconfig keeps the flag for native gems like puma.
+      ldflags << "-Wl,--exclude-libs,libssl.a:libcrypto.a"
     end
     extra_cflags = []
     extra_cflags << "-mno-outline-atomics" if linux_arm64?
@@ -983,6 +988,7 @@ class PortableRubyPackage
     check_no_homebrew_paths!(test_root, ruby, env)
     check_linkage!(test_root) if linux?
     check_abi!(test_root) if linux?
+    check_openssl_hidden!(test_root) if linux?
   end
 
   # Nothing in the tree may need a shared library that isn't part of glibc. This is the
@@ -1055,6 +1061,14 @@ class PortableRubyPackage
         end
       end
     end
+  end
+
+  # See ruby_build_env: an exported OpenSSL symbol lets a system libpq bind to it.
+  def check_openssl_hidden!(root)
+    exporters = Dir.glob(File.join(root, "**", "*.so")).select do |path|
+      capture("nm", "-D", "--defined-only", path, allow_failure: true).match?(/ (SSL_new|CRYPTO_malloc)$/)
+    end
+    raise PackageError, "OpenSSL symbols exported by:\n  #{exporters.join("\n  ")}" unless exporters.empty?
   end
 
   def package!
