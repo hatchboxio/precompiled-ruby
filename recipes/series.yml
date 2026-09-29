@@ -36,7 +36,9 @@ series:
   # because their openssl extensions predate OpenSSL 3; -fno-strict-overflow because
   # their fixnum overflow checks rely on signed overflow wrapping, which GCC exploits from
   # -O2 up (a 1.8.7 built without it evaluates 2**64 to 0); readline through a bundled
-  # libedit; no bundled msgpack/bootsnap; a version-appropriate native gem as the test.
+  # libedit; no bundled msgpack/bootsnap; a version-appropriate native gem as the test;
+  # init_only_exports so their openssl and digest extensions can't collide with a system
+  # OpenSSL 3 that the pg gem loads into the same process.
   "1.8":
     openssl: openssl1.0
     baseruby: none
@@ -45,7 +47,7 @@ series:
     install_doc: false
     install_target: install-nodoc   # 1.8 has no --disable-install-doc
     cflags: "-O3 -fno-strict-overflow"
-    patches: [lex_c99]
+    patches: [lex_c99, init_only_exports]
     freshen_config_guess: true
     extra_out_ext: [tk, tcltklib, gdbm, dbm]   # removed from the tree: 1.8 has no --with-out-ext
     rubygems: rubygems1.8
@@ -56,6 +58,7 @@ series:
     test_native_gem: { name: json, version: 1.8.6 }
   "1.9":
     openssl: openssl1.0
+    patches: [init_only_exports]
     baseruby: none
     use_libedit: true
     install_doc: false
@@ -70,6 +73,7 @@ series:
     test_native_gem: { name: json, version: 1.8.6 }
   "2.0":
     openssl: openssl1.0
+    patches: [init_only_exports]
     baseruby: none
     use_libedit: true
     install_doc: false
@@ -83,6 +87,7 @@ series:
     test_native_gem: { name: json, version: 1.8.6 }
   "2.1":
     openssl: openssl1.0
+    patches: [init_only_exports]
     baseruby: none
     use_libedit: true
     install_doc: false
@@ -95,6 +100,7 @@ series:
     test_native_gem: { name: json, version: 1.8.6 }
   "2.2":
     openssl: openssl1.0
+    patches: [init_only_exports]
     baseruby: none
     use_libedit: true
     install_doc: false
@@ -107,6 +113,7 @@ series:
     test_native_gem: { name: json, version: 1.8.6 }
   "2.3":
     openssl: openssl1.0
+    patches: [init_only_exports]
     baseruby: none
     use_libedit: true
     install_doc: false
@@ -119,6 +126,7 @@ series:
     test_native_gem: { name: json, version: 1.8.6 }
   "2.4":
     openssl: openssl1.1
+    patches: [init_only_exports]
     baseruby: none                  # 2.4's configure rejects --with-baseruby=no
     use_libedit: true
     install_doc: false
@@ -131,6 +139,7 @@ series:
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "2.5":
     openssl: openssl1.1
+    patches: [init_only_exports]
     baseruby: "no"
     use_libedit: true
     install_doc: false
@@ -143,6 +152,7 @@ series:
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "2.6":
     openssl: openssl1.1
+    patches: [init_only_exports]
     baseruby: "no"
     use_libedit: true
     install_doc: false
@@ -156,6 +166,7 @@ series:
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "2.7":
     openssl: openssl1.1
+    patches: [init_only_exports]
     baseruby: "no"
     readline_ext: false             # readline.rb falls back to reline from 2.7
     install_doc: false
@@ -169,6 +180,7 @@ series:
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "3.0":
     openssl: openssl1.1             # 3.0's openssl extension predates OpenSSL 3
+    patches: [init_only_exports]
     readline_ext: false
     install_doc: false
     extra_out_ext: [gdbm, dbm]
@@ -179,6 +191,7 @@ series:
     test_native_gem: { name: msgpack, version: 1.4.2 }
   "3.1":
     openssl: openssl1.1             # OpenSSL 3 is supported but this keeps 2.4–3.1 uniform
+    patches: [init_only_exports]
     readline_ext: false
     install_doc: false
     extra_out_ext: [gdbm, dbm]
