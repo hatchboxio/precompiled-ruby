@@ -409,6 +409,25 @@ class PortableRubyPackage
         # is declared inline without static, which C99 inline semantics (the default since
         # GCC 5) turn into an undefined reference at link time.
         inreplace(File.join(source, "lex.c"), "struct kwtable *\nrb_reserved_word", "static struct kwtable *\nrb_reserved_word")
+      when "init_only_exports"
+        # Old openssl extensions define stand-ins for functions their OpenSSL lacks
+        # (X509_STORE_set_ex_data, SSL_SESSION_cmp, ...), and 1.8's digest/sha2 has its own
+        # SHA256_Transform, all exported. When a system libcrypto.so.3 is already loaded
+        # (pg gem required first), calls to them bind to OpenSSL 3's functions, which crash
+        # on the old structs. Nothing links against these extensions, so they export only
+        # their Init function. The flag stays in their Makefiles, not rbconfig.
+        %w[openssl digest/md5 digest/sha1 digest/sha2 digest/rmd160].each do |name|
+          ext = File.join(source, "ext", name)
+          next unless File.exist?(File.join(ext, "extconf.rb"))
+
+          File.write(File.join(ext, "exports.map"), "{\n  global: Init_*;\n  local: *;\n};\n")
+          extconf = File.join(ext, "extconf.rb")
+          content = File.read(extconf)
+          raise PackageError, "#{extconf}: create_makefile not found" unless content.match?(/^\s*create_makefile\(/)
+          File.write(extconf, content.sub(/^(\s*)create_makefile\(/) do
+            "#{$1}$DLDFLAGS << \" -Wl,--version-script=\#{File.expand_path(\"exports.map\", $srcdir)}\"\n#{$1}create_makefile("
+          end)
+        end
       else
         raise PackageError, "unknown source patch: #{name}"
       end
@@ -1063,12 +1082,25 @@ class PortableRubyPackage
     end
   end
 
-  # See ruby_build_env: an exported OpenSSL symbol lets a system libpq bind to it.
+  # An exported symbol that the system OpenSSL also defines gets bound to it (or it to
+  # them) when both are loaded: see ruby_build_env and the init_only_exports patch. The
+  # bundled OpenSSL must be hidden everywhere, and the extensions that wrap or stand in
+  # for it may export nothing but their Init function.
   def check_openssl_hidden!(root)
-    exporters = Dir.glob(File.join(root, "**", "*.so")).select do |path|
-      capture("nm", "-D", "--defined-only", path, allow_failure: true).match?(/ (SSL_new|CRYPTO_malloc)$/)
+    offenders = Dir.glob(File.join(root, "**", "*.so")).filter_map do |path|
+      symbols = capture("nm", "-D", "--defined-only", path, allow_failure: true).lines.map { |line| line.split.last }
+      symbols = if init_only_exports? && path.match?(%r{/(openssl|digest/(md5|sha1|sha2|rmd160))\.so\z})
+        symbols.grep_v(/\A(Init_\w+|_init|_fini|_edata|_end|__bss_start)\z/)
+      else
+        symbols.grep(/\A(SSL_new|CRYPTO_malloc)\z/)
+      end
+      "#{path}: #{symbols.first(5).join(", ")}" if symbols.any?
     end
-    raise PackageError, "OpenSSL symbols exported by:\n  #{exporters.join("\n  ")}" unless exporters.empty?
+    raise PackageError, "OpenSSL symbols exported by:\n  #{offenders.join("\n  ")}" unless offenders.empty?
+  end
+
+  def init_only_exports?
+    Array(@series["patches"]).include?("init_only_exports")
   end
 
   def package!
