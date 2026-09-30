@@ -240,6 +240,11 @@ class PortableRubyPackage
         "--enable-widec",
         "--with-gpm=no",
         "--without-ada",
+        # Read the system's terminfo, not a database under the build directory that the
+        # tarball doesn't ship ("Cannot read termcap database" on every readline load).
+        "--with-default-terminfo-dir=/usr/share/terminfo",
+        "--with-terminfo-dirs=/etc/terminfo:/lib/terminfo:/usr/share/terminfo",
+        "--disable-db-install",
         cwd: ncurses_source,
         env: ncurses_env
     make ncurses_source, env: ncurses_env
@@ -376,6 +381,10 @@ class PortableRubyPackage
     install_bundlers
     patch_executables
     patch_rbconfig
+    if linux?
+      localize_static_libruby
+      remove_build_rpaths
+    end
     copy_native_gem_dependencies
     bundle_certificates
   end
@@ -793,6 +802,7 @@ class PortableRubyPackage
     content.gsub!(%r{ ?-L#{Regexp.escape(@build_root)}[^ "']*}, "")
     content.gsub!(%r{ ?-B#{Regexp.escape(@build_root)}[^ "']*}, "")
     content.gsub!(%r{ ?-Wl,-rpath-link=#{Regexp.escape(@build_root)}[^ "']*}, "")
+    content.gsub!(%r{ ?-Wl,(?:-rpath,|-R)#{Regexp.escape(@build_root)}[^ "']*}, "")
     content.gsub!(/(CONFIG\["CC"\] = )"[^"]*gcc(?:-\d+)?"/, '\\1"cc"')
     content.gsub!(/(CONFIG\["LDSHARED"\] = )"[^"]*gcc(?:-\d+)?/, '\\1"cc')
     content.gsub!(/(CONFIG\["CXX"\] = )"[^"]*g\+\+(?:-\d+)?"/, '\\1"c++"')
@@ -803,6 +813,44 @@ class PortableRubyPackage
     end
     content << rbconfig_portability_patch
     File.write(rbconfig, content)
+  end
+
+  # mkmf links its have_func probes against libruby-static.a, where Ruby's internal
+  # (hidden visibility) functions are ordinary globals, so a probe for one succeeds. The
+  # gem then calls a function the ruby executable doesn't export and fails to load:
+  # strscan 3.1.8 on Ruby 2.4-2.7 with "undefined symbol: rb_deprecate_constant". Merging
+  # the archive into one object and making its hidden symbols local leaves exactly the
+  # exported API visible, as a shared libruby would.
+  def localize_static_libruby
+    Dir.glob(File.join(@install_prefix, "lib", "libruby*static.a")).each do |archive|
+      merged = File.join(@build_root, "libruby-merged.o")
+      run "ld", "-r", "--whole-archive", archive, "-o", merged
+      run "objcopy", "--localize-hidden", merged
+      FileUtils.rm_f(archive)
+      run "ar", "rcs", archive, merged
+      FileUtils.rm_f(merged)
+    end
+  end
+
+  # configure's --with-opt-dir and friends leave a run path to the build's dependency
+  # directories in the executable and every extension. Nothing is loaded from there (the
+  # dependencies are static), so drop those entries rather than ship a search path to a
+  # directory that whoever can create it controls.
+  def remove_build_rpaths
+    Dir.glob(File.join(@install_prefix, "**", "*")).each do |path|
+      next unless File.file?(path) && !File.symlink?(path)
+      next unless File.binread(path, 4) == "\x7FELF".b
+
+      rpath = capture("patchelf", "--print-rpath", path, allow_failure: true).strip
+      next unless rpath.include?(@build_root)
+
+      kept = rpath.split(":").reject { |dir| dir.start_with?(@build_root) }
+      if kept.empty?
+        run "patchelf", "--remove-rpath", path
+      else
+        run "patchelf", "--set-rpath", kept.join(":"), path
+      end
+    end
   end
 
   def rbconfig_portability_patch
@@ -822,6 +870,7 @@ class PortableRubyPackage
           Regexp.new(" ?-L" + Regexp.escape(build_root) + "[^ ]*"),
           Regexp.new(" ?-B" + Regexp.escape(build_root) + "[^ ]*"),
           Regexp.new(" ?-Wl,-rpath-link=" + Regexp.escape(build_root) + "[^ ]*"),
+          Regexp.new(" ?-Wl,(?:-rpath,|-R)" + Regexp.escape(build_root) + "[^ ]*"),
           / ?-fuse-linker-plugin/,
           / ?-fuse-ld=[^ ]+/,
           / ?-flto(?:=[^ ]+)?/,
@@ -864,6 +913,12 @@ class PortableRubyPackage
               next unless config[key]
               config[key] = "-std=gnu99 \#{config[key]}".squeeze(" ").strip unless config[key].include?("-std=")
             end
+          end
+          # mkmf's dir_config reads --with-*-dir from here and would add the build's
+          # dependency directories to a gem's -I, -L and run path. Everything those
+          # options pointed at now lives in this prefix.
+          if config["configure_args"]
+            config["configure_args"] = config["configure_args"].gsub(Regexp.new(Regexp.escape(build_root) + "[^ '\\"]*")) { portable_prefix }
           end
           config["CPPFLAGS"] = "\#{portable_cppflags} \#{config["CPPFLAGS"]}".strip
           config["LDFLAGS"] = "-L\#{portable_lib} \#{config["LDFLAGS"]}".strip
@@ -1008,6 +1063,7 @@ class PortableRubyPackage
     check_linkage!(test_root) if linux?
     check_abi!(test_root) if linux?
     check_openssl_hidden!(test_root) if linux?
+    check_no_build_paths!(test_root, ruby, env) if linux?
   end
 
   # Nothing in the tree may need a shared library that isn't part of glibc. This is the
@@ -1062,6 +1118,30 @@ class PortableRubyPackage
         raise PackageError, "#{path} contains forbidden path #{needle}" if body.include?(needle)
       end
     end
+  end
+
+  # Native gems are built from rbconfig's flags, and anything there that names the build
+  # tree ends up in them; a run path in a shipped binary does the same for the loader.
+  def check_no_build_paths!(root, ruby, env)
+    keys = %w[CFLAGS CPPFLAGS CXXFLAGS LDFLAGS DLDFLAGS LIBS LIBRUBYARG_STATIC configure_args]
+    config = capture(ruby, "-rrbconfig", "-e", "puts RbConfig::CONFIG.values_at(*ARGV).compact", *keys, env: env)
+    # The test copy itself lives under the build root, so look for the places the build
+    # used: its dependency tree and the prefix Ruby was installed to.
+    stale = [@deps_root, @install_prefix]
+    raise PackageError, "RbConfig still names the build tree:\n#{config}" if stale.any? { |dir| config.include?(dir) }
+
+    binaries = Dir.glob(File.join(root, "**", "*.so")) + Dir.glob(File.join(root, "{bin,libexec}", "ruby"))
+    offenders = binaries.select do |path|
+      rpath = capture("patchelf", "--print-rpath", path, allow_failure: true)
+      stale.any? { |dir| rpath.include?(dir) }
+    end
+    raise PackageError, "Run path into the build tree in:\n  #{offenders.join("\n  ")}" unless offenders.empty?
+
+    archive = Dir.glob(File.join(root, "lib", "libruby*static.a")).first
+    return unless archive
+
+    hidden = capture("readelf", "-sW", archive).lines.count { |line| line.match?(/ (GLOBAL|WEAK)\s+HIDDEN /) }
+    raise PackageError, "#{archive} still has #{hidden} linkable hidden symbols" unless hidden.zero?
   end
 
   def check_abi!(root)
