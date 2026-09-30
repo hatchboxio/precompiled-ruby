@@ -1,8 +1,8 @@
 # Portable Ruby Binaries
 
 Tools to build Ruby tarballs for Linux that can be installed and run from anywhere on the
-filesystem, from Ruby 1.8.7 to the current releases. [Hatchbox](https://hatchbox.io) uses
-them to install Ruby on its customers' servers without compiling it there.
+filesystem, from Ruby 1.8.7 to the current releases. [Hatchbox](https://hatchbox.io)
+maintains them to install Ruby on its customers' servers without compiling it there.
 
 Every tarball is self-contained: OpenSSL, libyaml, libffi, zlib and libxcrypt (and libedit
 and ncurses where a series uses them) are linked in statically, so the only shared libraries
@@ -66,34 +66,49 @@ the plain name (`ruby-VERSION.x86_64_linux.tar.gz`), which is the name mise and 
 `recipes/rubies.yml` is the full list. New releases of supported series are added
 automatically.
 
-## Local development
+## Rails applications
 
-Recipes are checked in under `recipes/`:
+Every series has been deployed as a fresh Rails application on Ubuntu 24.04, the way a
+server deploy does it: the tarball extracted into place, gems installed in deployment mode
+with their native extensions compiled from source, migrations over TLS to PostgreSQL, asset
+precompilation, a runner script making an HTTPS request, and Puma serving a form.
 
-- `recipes/rubies.yml`: Ruby source URLs, SHA256 values, series, and prerelease versions.
-- `recipes/dependencies.yml`: portable dependency source URLs and SHA256 values.
-- `recipes/series.yml`: per-series build settings.
-- `recipes/targets.yml`: release target metadata and pinned Linux containers.
+| Ruby | Rails |
+| --- | --- |
+| 1.8.7 | 3.2 |
+| 1.9.3, 2.0, 2.1 | 4.2 |
+| 2.2, 2.3, 2.4 | 5.2 |
+| 2.5, 2.6 | 6.1 |
+| 2.7, 3.0 | 7.1 (7.0 on 2.7.0, whose parser rejects 7.1) |
+| 3.1 | 7.2 |
+| 3.2 | 8.0, with Solid Queue |
+| 3.2, 3.3, 3.4, 4.0 | 8.1, also on Ubuntu 20.04, 22.04 and 26.04, Debian 12 and 13, with MySQL and MariaDB |
 
-Validate recipes and build a tarball with:
+Old applications need the usual gem pins for their age (for example `loofah` 2.20 or older
+with the Nokogiri that Ruby 2.4 and earlier are limited to, and PostgreSQL 11 or older for
+Rails 4.2 and earlier); none of that is particular to these builds.
 
-```sh
-bin/validate-recipes
-bin/package 3.4.9 --target x86_64_linux --no-yjit --output rubies
-```
+## Native gems
 
-`bin/package-linux VERSION TARGET [--yjit|--no-yjit]` runs the same thing inside the pinned
-manylinux2014 container for a Linux target, the way CI does, so a Linux tarball can be built
-and tested locally without a Linux machine.
+Gems with C extensions compile against an installed tarball as they would against a Ruby
+built on the machine, given a compiler and the distribution's development packages for
+whatever the gem itself links to (`libpq-dev` for pg, and so on). A few things are arranged
+so that the result doesn't depend on how or where the Ruby was built:
 
-Linux release builds are expected to run in the pinned manylinux2014 containers from `recipes/targets.yml`. Builds need a baseruby of Ruby 3.0.0 or newer; set `JDX_RUBY_BASERUBY` when your shell default is older. Ruby 3.2 needs a baseruby of exactly the version being built: the build makes one first, or uses `JDX_RUBY_BASERUBY` when it points at one. YJIT builds use rustup/rustc from `PATH`, with optional `JDX_RUBY_RUSTUP_HOME`.
-
-Every build ends by testing the packaged tree from a different directory: the standard
-library and its extensions load, a native gem compiles and loads, nothing links to a shared
-library outside glibc or needs a glibc newer than 2.17, and no OpenSSL symbol is exported
-(see [below](#alongside-the-systems-openssl)). Pull requests only build Ruby 3.4.1 (all
-four artifacts), so build a change to an older series locally with `bin/package-linux`
-before merging it.
+- The headers, static libraries and pkg-config files of the bundled dependencies are in the
+  tarball's `include/` and `lib/`, ahead of the system's on the compiler's search path. A
+  gem that uses OpenSSL (puma, eventmachine) therefore links the bundled one statically,
+  matching Ruby's own `openssl` extension, and doesn't export it either.
+- `rbconfig` is rewritten at load time for wherever the tarball now lives: compiler and
+  linker names are the generic `cc` and `c++`, flags that named the build tree are removed,
+  and the `--with-*-dir` options recorded at build time point at the tarball.
+- Ruby is linked statically, and its internal functions are not linkable from
+  `libruby-static.a`. An extension's `have_func` check then finds exactly the functions the
+  `ruby` executable exports; without this a gem can compile against an internal function
+  and fail to load (`undefined symbol: rb_deprecate_constant` from strscan on Ruby 2.4 to
+  2.7).
+- The bundled ncurses (behind readline, where a series uses libedit) reads the system's
+  terminfo from `/etc/terminfo`, `/lib/terminfo` and `/usr/share/terminfo`.
 
 ## End-of-life Rubies
 
@@ -109,23 +124,6 @@ OpenSSL 3, readline through a bundled libedit, the host Ruby hidden from configu
 would otherwise use it as baseruby, no bundled msgpack/bootsnap, and a version-appropriate
 native gem as the installation test. All of them are built and released for both
 `x86_64_linux` and `arm64_linux`.
-
-Each series has been deployed as a fresh Rails application on Ubuntu 24.04 with the newest
-Rails that supports it: gems compiled from source, migrations over TLS to PostgreSQL, asset
-precompilation, and Puma serving a form.
-
-| Ruby | Rails |
-| --- | --- |
-| 1.8.7 | 3.2 |
-| 1.9.3, 2.0, 2.1 | 4.2 |
-| 2.2, 2.3, 2.4 | 5.2 |
-| 2.5, 2.6 | 6.1 |
-| 2.7, 3.0 | 7.1 (7.0 on 2.7.0, whose parser rejects 7.1) |
-| 3.1 | 7.2 |
-
-The old gems need the usual pins for their age (for example `loofah` 2.20 or older with the
-Nokogiri that Ruby 2.4 and earlier are limited to); none of that is particular to these
-builds.
 
 Things to know when running them:
 
@@ -157,12 +155,13 @@ build fails if any of that regresses.
 
 Without this, the dynamic linker binds one library's calls to the other's functions and
 the process segfaults or fails its TLS handshakes, depending on which was loaded first.
-The published builds of every series from 1.8 to 3.2 are tested on Ubuntu 24.04 with `pg`
+The published builds of every series from 1.8 to 4.0 are tested on Ubuntu 24.04 with `pg`
 compiled against the system libpq: a TLS connection to PostgreSQL and an HTTPS request in
 the same process, requiring `pg` before `openssl` and the other way round.
 
 Native gems that use OpenSSL themselves (puma, eventmachine) compile against the bundled
-headers and static libraries, and get the same linker flag through `rbconfig`.
+headers and static libraries, and get the same linker flag through `rbconfig`; see
+[Native gems](#native-gems).
 
 ## SSL certificates
 
@@ -174,6 +173,36 @@ These Rubies use the first available certificate source in this order:
 | 2 | Portable Ruby overrides | `JDX_RUBY_SSL_CERT_FILE`, `JDX_RUBY_SSL_CERT_DIR` |
 | 3 | System bundles | `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`, `/etc/ssl/cert.pem` |
 | 4 | Bundled CA bundle | Last-resort fallback included with the portable build. |
+
+## Local development
+
+Recipes are checked in under `recipes/`:
+
+- `recipes/rubies.yml`: Ruby source URLs, SHA256 values, series, and prerelease versions.
+- `recipes/dependencies.yml`: portable dependency source URLs and SHA256 values.
+- `recipes/series.yml`: per-series build settings.
+- `recipes/targets.yml`: release target metadata and pinned Linux containers.
+
+Validate recipes and build a tarball with:
+
+```sh
+bin/validate-recipes
+bin/package 3.4.9 --target x86_64_linux --no-yjit --output rubies
+```
+
+`bin/package-linux VERSION TARGET [--yjit|--no-yjit]` runs the same thing inside the pinned
+manylinux2014 container for a Linux target, the way CI does, so a Linux tarball can be built
+and tested locally without a Linux machine.
+
+Linux release builds are expected to run in the pinned manylinux2014 containers from `recipes/targets.yml`. Builds need a baseruby of Ruby 3.0.0 or newer; set `JDX_RUBY_BASERUBY` when your shell default is older. Ruby 3.2 needs a baseruby of exactly the version being built: the build makes one first, or uses `JDX_RUBY_BASERUBY` when it points at one. YJIT builds use rustup/rustc from `PATH`, with optional `JDX_RUBY_RUSTUP_HOME`.
+
+Every build ends by testing the packaged tree from a different directory: the standard
+library and its extensions load, a native gem compiles and loads, nothing links to a shared
+library outside glibc or needs a glibc newer than 2.17, no OpenSSL symbol is exported
+(see [below](#alongside-the-systems-openssl)), and nothing a native gem is built from still
+names the build tree (see [Native gems](#native-gems)). Pull requests only build Ruby 3.4.1
+(all four artifacts), so build a change to an older series locally with `bin/package-linux`
+before merging it.
 
 ## How do I issue a new release
 
@@ -206,8 +235,9 @@ runs twice a day and adds a recipe for each new Ruby release; Release New Versio
 builds it.
 
 A change to the packaging script or a series' settings doesn't rebuild anything by itself.
-Dispatch Release New Versions with `only` set to the versions it affects. The packaging
-script is part of every version's fingerprint, so naming all versions rebuilds all of them.
+Dispatch Release New Versions with `only` set to the versions it affects, or with
+`replace_all` when it affects every build. The packaging script is part of every version's
+fingerprint, so `replace_all` after a change to it rebuilds everything.
 
 No secrets are required. One is optional:
 
