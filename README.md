@@ -110,6 +110,23 @@ would otherwise use it as baseruby, no bundled msgpack/bootsnap, and a version-a
 native gem as the installation test. All of them are built and released for both
 `x86_64_linux` and `arm64_linux`.
 
+Each series has been deployed as a fresh Rails application on Ubuntu 24.04 with the newest
+Rails that supports it: gems compiled from source, migrations over TLS to PostgreSQL, asset
+precompilation, and Puma serving a form.
+
+| Ruby | Rails |
+| --- | --- |
+| 1.8.7 | 3.2 |
+| 1.9.3, 2.0, 2.1 | 4.2 |
+| 2.2, 2.3, 2.4 | 5.2 |
+| 2.5, 2.6 | 6.1 |
+| 2.7, 3.0 | 7.1 (7.0 on 2.7.0, whose parser rejects 7.1) |
+| 3.1 | 7.2 |
+
+The old gems need the usual pins for their age (for example `loofah` 2.20 or older with the
+Nokogiri that Ruby 2.4 and earlier are limited to); none of that is particular to these
+builds.
+
 Things to know when running them:
 
 - Ruby 1.8 predates `--enable-load-relative`, so its `bin/ruby` is a shell wrapper that
@@ -122,6 +139,8 @@ Things to know when running them:
   gems it installs, so reinstall gems (or fix their first lines) after moving one of these
   Rubies. The tarball's own executables are relocatable.
 - MJIT (2.6 to 3.1, off unless asked for) compiles with `/usr/bin/cc` at run time.
+- On Ruby 1.9.3, Puma 3.10 and later never finishes a graceful stop (a `Thread#join` bug in
+  that Ruby); use Puma 3.8.2 or older there.
 
 Series with `yjit: false` (everything up to 3.1, whose C-based YJIT was experimental) get
 one build per target in a release, under the plain name. A hand-run `bin/package --yjit` on
