@@ -127,7 +127,7 @@ class PortableRubyPackage
       glibc = `getconf GNU_LIBC_VERSION 2>/dev/null`.split.last
       if glibc && glibc != @target_recipe["max_glibc"]
         raise PackageError, "expected glibc #{@target_recipe["max_glibc"]}, found #{glibc}; " \
-                            "Linux targets must be built inside the manylinux2014 container"
+                            "Linux targets must be built inside the pinned manylinux container"
       end
     elsif !host_os.include?("darwin")
       raise PackageError, "macos target must be built on macOS"
@@ -1206,8 +1206,8 @@ class PortableRubyPackage
     FileUtils.rm_f(path)
     # Alternate between the primary URL and the mirror, in rounds with a growing pause:
     # curl's own --retry only covers HTTP errors, not a host that is down (the
-    # manylinux2014 curl is too old for --retry-all-errors), and a single upstream
-    # outage should not fail a build.
+    # manylinux image's curl, 7.61, is too old for --retry-all-errors), and a single
+    # upstream outage should not fail a build.
     urls = [recipe["url"], recipe["mirror"]].compact
     attempts = DOWNLOAD_RETRY_DELAYS.flat_map { |delay| urls.map { |url| [url, delay] } }
     attempts.each_with_index do |(url, delay), index|

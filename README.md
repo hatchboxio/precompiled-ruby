@@ -6,10 +6,14 @@ maintains them to install Ruby on its customers' servers without compiling it th
 
 Every tarball is self-contained: OpenSSL, libyaml, libffi, zlib and libxcrypt (and libedit
 and ncurses where a series uses them) are linked in statically, so the only shared libraries
-a build needs are glibc's. They are built against glibc 2.17, which means any Ubuntu LTS
-from 20.04 (Focal) on, Debian 11 on, and other distributions of that vintage or newer, on
-x86_64 and arm64. Headers, static libraries and pkg-config files for the bundled
-dependencies ship in the tarball, so native gems compile after it has been moved.
+a build needs are glibc's. They are built against glibc 2.28 (AlmaLinux 8), which means any
+Ubuntu LTS from 20.04 (Focal) on, Debian 10 on, RHEL 8 on, and other distributions of that
+vintage or newer, on x86_64 and arm64. At run time they use the system's glibc; the build
+glibc only limits which of its functions Ruby can use. 2.28 is as new as it can go while
+still running on Ubuntu 20.04, and it gives Ruby 2.7 and later `File.birthtime` (through
+`statx`) and `copy_file_range` for `IO.copy_stream`, which glibc 2.17 builds lacked.
+Headers, static libraries and pkg-config files for the bundled dependencies ship in the
+tarball, so native gems compile after it has been moved.
 
 ## How do I use these rubies
 
@@ -191,14 +195,14 @@ bin/package 3.4.9 --target x86_64_linux --no-yjit --output rubies
 ```
 
 `bin/package-linux VERSION TARGET [--yjit|--no-yjit]` runs the same thing inside the pinned
-manylinux2014 container for a Linux target, the way CI does, so a Linux tarball can be built
+manylinux container for a Linux target, the way CI does, so a Linux tarball can be built
 and tested locally without a Linux machine.
 
-Linux release builds are expected to run in the pinned manylinux2014 containers from `recipes/targets.yml`. Builds need a baseruby of Ruby 3.0.0 or newer; set `JDX_RUBY_BASERUBY` when your shell default is older. Ruby 3.2 needs a baseruby of exactly the version being built: the build makes one first, or uses `JDX_RUBY_BASERUBY` when it points at one. YJIT builds use rustup/rustc from `PATH`, with optional `JDX_RUBY_RUSTUP_HOME`.
+Linux release builds are expected to run in the pinned manylinux_2_28 containers (GCC 14) from `recipes/targets.yml`. Builds need a baseruby of Ruby 3.0.0 or newer; set `JDX_RUBY_BASERUBY` when your shell default is older. Ruby 3.2 needs a baseruby of exactly the version being built: the build makes one first, or uses `JDX_RUBY_BASERUBY` when it points at one. YJIT builds use rustup/rustc from `PATH`, with optional `JDX_RUBY_RUSTUP_HOME`.
 
 Every build ends by testing the packaged tree from a different directory: the standard
 library and its extensions load, a native gem compiles and loads, nothing links to a shared
-library outside glibc or needs a glibc newer than 2.17, no OpenSSL symbol is exported
+library outside glibc or needs a glibc newer than 2.28, no OpenSSL symbol is exported
 (see [below](#alongside-the-systems-openssl)), and nothing a native gem is built from still
 names the build tree (see [Native gems](#native-gems)). Pull requests only build Ruby 3.4.1
 (all four artifacts), so build a change to an older series locally with `bin/package-linux`

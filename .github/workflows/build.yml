@@ -70,7 +70,7 @@ jobs:
           container=$(ruby -ryaml -e 'puts YAML.load_file("recipes/targets.yml").fetch("targets").fetch(ENV.fetch("TARGET")).fetch("container")')
           echo "container=$container" >> "$GITHUB_OUTPUT"
 
-      - name: Build portable Ruby in manylinux2014
+      - name: Build portable Ruby in manylinux
         env:
           VERSION: ${{ inputs.version }}
           TARGET: ${{ matrix.target }}

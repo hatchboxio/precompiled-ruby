@@ -40,6 +40,10 @@ series:
   # libedit; no bundled msgpack/bootsnap; a version-appropriate native gem as the test;
   # init_only_exports so their openssl and digest extensions can't collide with a system
   # OpenSSL 3 that the pg gem loads into the same process.
+  # Up to 2.2 their sources call undeclared functions and use K&R declarations, which GCC
+  # 14 rejects (and which break configure's own checks for OpenSSL functions), so those
+  # errors are downgraded to warnings. Only flags that older compilers also accept: CFLAGS
+  # stays in rbconfig and reaches native gems built on servers with GCC 9 or older.
   "1.8":
     openssl: openssl1.0
     baseruby: none
@@ -47,7 +51,7 @@ series:
     use_libedit: true
     install_doc: false
     install_target: install-nodoc   # 1.8 has no --disable-install-doc
-    cflags: "-O3 -fno-strict-overflow"
+    cflags: "-O3 -fno-strict-overflow -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=incompatible-pointer-types"
     patches: [lex_c99, init_only_exports]
     freshen_config_guess: true
     extra_out_ext: [tk, tcltklib, gdbm, dbm]   # removed from the tree: 1.8 has no --with-out-ext
@@ -63,7 +67,7 @@ series:
     baseruby: none
     use_libedit: true
     install_doc: false
-    cflags: "-O3 -fno-strict-overflow"
+    cflags: "-O3 -fno-strict-overflow -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=incompatible-pointer-types"
     make_jobs: 1                    # parallel make races in ext/ on 1.9.3
     freshen_config_guess: true
     extra_out_ext: [tk, tcl, gdbm, dbm]
@@ -78,7 +82,7 @@ series:
     baseruby: none
     use_libedit: true
     install_doc: false
-    cflags: "-O3 -fno-strict-overflow"
+    cflags: "-O3 -fno-strict-overflow -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=incompatible-pointer-types"
     freshen_config_guess: true      # 2.0's config.guess predates aarch64
     extra_out_ext: [tk, tcl, gdbm, dbm]
     bundler: ["1.17.3"]
@@ -92,7 +96,7 @@ series:
     baseruby: none
     use_libedit: true
     install_doc: false
-    cflags: "-O3 -fno-strict-overflow"
+    cflags: "-O3 -fno-strict-overflow -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=incompatible-pointer-types"
     extra_out_ext: [tk, tcl, gdbm, dbm]
     bundler: ["1.17.3"]
     bundled_gems: ~
@@ -105,7 +109,7 @@ series:
     baseruby: none
     use_libedit: true
     install_doc: false
-    cflags: "-O3 -fno-strict-overflow"
+    cflags: "-O3 -fno-strict-overflow -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=int-conversion -Wno-error=incompatible-pointer-types"
     extra_out_ext: [tk, tcl, gdbm, dbm]
     bundler: ["1.17.3"]
     bundled_gems: ~

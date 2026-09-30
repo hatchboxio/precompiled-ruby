@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run bin/package for a Linux target inside its pinned manylinux2014 container, the way
+# Run bin/package for a Linux target inside its pinned manylinux container, the way
 # .github/workflows/build.yml does, so a Linux tarball can be built and tested locally.
 #
 #   bin/package-linux 3.4.9 x86_64_linux --no-yjit
@@ -30,7 +30,10 @@ esac
 # has released 3.4.7.
 bootstrap_version=3.4.7
 bootstrap_repo=${BOOTSTRAP_REPO:-hatchboxio/precompiled-ruby}
-image="precompiled-ruby-build:${target}-${bootstrap_version}"
+# Keyed by the container too, so a new pin in recipes/targets.yml gets a new image and a
+# new build volume instead of reusing ones made with the old toolchain.
+container_id=$(printf %s "$container" | cksum | cut -d" " -f1)
+image="precompiled-ruby-build:${target}-${bootstrap_version}-${container_id}"
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
   echo "Building $image from $container..."
@@ -55,10 +58,10 @@ mkdir -p rubies .cache
 # filesystem — libffi's generated Makefile came out unreadable on one — and CI builds on
 # a native one. The volume keeps a failed build's tree around for inspection:
 #
-#   docker run --rm -it -v precompiled-ruby-build-$target:/work/.build $image bash
+#   docker run --rm -it -v precompiled-ruby-build-$target-$container_id:/work/.build $image bash
 docker run --rm --platform "$platform" \
   -v "$PWD:/src:ro" -v "$PWD/.cache:/work/.cache" -v "$PWD/rubies:/work/rubies" \
-  -v "precompiled-ruby-build-${target}:/work/.build" \
+  -v "precompiled-ruby-build-${target}-${container_id}:/work/.build" \
   -e JDX_RUBY_RUSTUP_HOME="/work/.build/rustup-${target}" -e JDX_RUBY_JOBS \
   "$image" /bin/bash -lc "
     set -euo pipefail

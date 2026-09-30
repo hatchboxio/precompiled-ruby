@@ -20,7 +20,7 @@ Build a Ruby version locally:
 bin/package 3.4.9 --target x86_64_linux --no-yjit --output rubies
 ```
 
-Linux targets must be built inside their manylinux2014 container; `bin/package-linux` does that from any Docker host, including macOS.
+Linux targets must be built inside their pinned manylinux_2_28 container; `bin/package-linux` does that from any Docker host, including macOS.
 
 Builds need a baseruby of Ruby 3.0.0 or newer; set `JDX_RUBY_BASERUBY` when the shell default is older. Ruby 3.2.x builds require `JDX_RUBY_BASERUBY` to point to an existing Ruby executable with the same version.
 
@@ -33,14 +33,14 @@ YJIT builds require `rustup` or `rustc` in `PATH`. Set `JDX_RUBY_RUSTUP_HOME` to
 - `recipes/rubies.yml`: Ruby source URL, SHA256, series, and prerelease version metadata.
 - `recipes/dependencies.yml`: portable dependency source URL and SHA256 metadata.
 - `recipes/series.yml`: per-series behavior such as libedit, bundled gems, and baseruby requirements.
-- `recipes/targets.yml`: release targets, artifact platform names, and pinned manylinux2014 containers.
+- `recipes/targets.yml`: release targets, artifact platform names, and pinned manylinux_2_28 containers.
 
 ### Commands
 
 - `bin/package`: Builds portable dependencies, builds Ruby, runs runtime/linkage/ABI checks, and writes release tarballs.
 - `bin/validate-recipes`: Validates YAML shape, required fields, duplicate versions, URL/SHA256 formats, and target matrix completeness.
 - `bin/update-ruby-recipe`: Adds or updates a Ruby entry in `recipes/rubies.yml`; used by autobump.
-- `bin/package-linux`: Runs `bin/package` for a Linux target inside its pinned manylinux2014 container, mirroring the build workflow, for local Linux builds.
+- `bin/package-linux`: Runs `bin/package` for a Linux target inside its pinned manylinux container, mirroring the build workflow, for local Linux builds.
 - `bin/recipe-info`: Prints a version's effective series settings (`legacy`, `yjit`, ...) for workflows.
 - `bin/prune-revisions`: Deletes a version's oldest revision releases and tags, keeping the newest `KEEP_REVISIONS` (2); run by the release workflow after publishing.
 - `bin/build-fingerprint`: Prints a digest of everything in the repo that affects a version's build; the release workflow skips rebuilding when it matches the newest revision release's.
@@ -51,7 +51,7 @@ YJIT builds require `rustup` or `rustc` in `PATH`. Set `JDX_RUBY_RUSTUP_HOME` to
 
 ### Key Build Details
 
-- Linux builds use pinned manylinux2014/glibc 2.17 containers for both YJIT and no-YJIT artifacts.
+- Linux builds use pinned manylinux_2_28 containers (AlmaLinux 8, glibc 2.28, GCC 14) for both YJIT and no-YJIT artifacts. glibc 2.28 is the newest that still runs on Ubuntu 20.04 (2.31), the oldest release Hatchbox provisions.
 - `pkgconf` is built as a bootstrap tool so the build has no host package-manager dependency.
 - OpenSSL, libyaml, libffi, libxcrypt, zlib, ncurses, and libedit are source-built into an isolated prefix as needed.
 - Bundled `msgpack` and `bootsnap` gems are staged during the Ruby build.
