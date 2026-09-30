@@ -127,7 +127,7 @@ class PortableRubyPackage
       glibc = `getconf GNU_LIBC_VERSION 2>/dev/null`.split.last
       if glibc && glibc != @target_recipe["max_glibc"]
         raise PackageError, "expected glibc #{@target_recipe["max_glibc"]}, found #{glibc}; " \
-                            "Linux targets must be built inside the manylinux2014 container"
+                            "Linux targets must be built inside the pinned manylinux container"
       end
     elsif !host_os.include?("darwin")
       raise PackageError, "macos target must be built on macOS"
@@ -386,6 +386,7 @@ class PortableRubyPackage
       remove_build_rpaths
     end
     copy_native_gem_dependencies
+    relocate_pkgconfig_files
     bundle_certificates
   end
 
@@ -803,6 +804,8 @@ class PortableRubyPackage
     content.gsub!(%r{ ?-B#{Regexp.escape(@build_root)}[^ "']*}, "")
     content.gsub!(%r{ ?-Wl,-rpath-link=#{Regexp.escape(@build_root)}[^ "']*}, "")
     content.gsub!(%r{ ?-Wl,(?:-rpath,|-R)#{Regexp.escape(@build_root)}[^ "']*}, "")
+    # Where Ruby's own build found the YJIT static library; nothing after the build uses it.
+    content.gsub!(/(CONFIG\["RUST_LIB"\] = )"[^"]*#{Regexp.escape(@build_root)}[^"]*"/, '\\1""')
     content.gsub!(/(CONFIG\["CC"\] = )"[^"]*gcc(?:-\d+)?"/, '\\1"cc"')
     content.gsub!(/(CONFIG\["LDSHARED"\] = )"[^"]*gcc(?:-\d+)?/, '\\1"cc')
     content.gsub!(/(CONFIG\["CXX"\] = )"[^"]*g\+\+(?:-\d+)?"/, '\\1"c++"')
@@ -821,11 +824,16 @@ class PortableRubyPackage
   # strscan 3.1.8 on Ruby 2.4-2.7 with "undefined symbol: rb_deprecate_constant". Merging
   # the archive into one object and making its hidden symbols local leaves exactly the
   # exported API visible, as a shared libruby would.
+  #
+  # As one object it is linked whole into every probe, so its debug info goes too: 900 MB
+  # of linker memory per have_func on 3.4, enough to get gem installs OOM-killed on small
+  # servers (and a killed link reads as "function missing"). Nothing debugs through this
+  # archive; the ruby executable keeps its own debug info. Stripped, a probe takes ~50 MB.
   def localize_static_libruby
     Dir.glob(File.join(@install_prefix, "lib", "libruby*static.a")).each do |archive|
       merged = File.join(@build_root, "libruby-merged.o")
       run "ld", "-r", "--whole-archive", archive, "-o", merged
-      run "objcopy", "--localize-hidden", merged
+      run "objcopy", "--localize-hidden", "--strip-debug", merged
       FileUtils.rm_f(archive)
       run "ar", "rcs", archive, merged
       FileUtils.rm_f(merged)
@@ -929,6 +937,19 @@ class PortableRubyPackage
         ENV["PKG_CONFIG_PATH"] = [portable_pkgconfig, ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(File::PATH_SEPARATOR)
       end
     RUBY
+  end
+
+  # pkg-config files from the dependencies' own installs, and Ruby's ruby-X.pc, name the
+  # directories they were installed to. Everything they describe is now in this prefix.
+  def relocate_pkgconfig_files
+    relocated = "${pcfiledir}/../.."
+    Dir.glob(File.join(@install_prefix, "lib", "pkgconfig", "*.pc")).each do |pc|
+      next if File.symlink?(pc)
+
+      content = File.read(pc)
+      updated = content.gsub(%r{#{Regexp.escape(@deps_root)}/[^/\s]+}, relocated).gsub(@install_prefix, relocated)
+      File.write(pc, updated) unless updated == content
+    end
   end
 
   def copy_native_gem_dependencies
@@ -1130,6 +1151,12 @@ class PortableRubyPackage
     stale = [@deps_root, @install_prefix]
     raise PackageError, "RbConfig still names the build tree:\n#{config}" if stale.any? { |dir| config.include?(dir) }
 
+    pkgconfig = Dir.glob(File.join(root, "lib", "pkgconfig", "*.pc")).select do |pc|
+      body = File.read(pc)
+      stale.any? { |dir| body.include?(dir) }
+    end
+    raise PackageError, "pkg-config files name the build tree:\n  #{pkgconfig.join("\n  ")}" unless pkgconfig.empty?
+
     binaries = Dir.glob(File.join(root, "**", "*.so")) + Dir.glob(File.join(root, "{bin,libexec}", "ruby"))
     offenders = binaries.select do |path|
       rpath = capture("patchelf", "--print-rpath", path, allow_failure: true)
@@ -1142,6 +1169,9 @@ class PortableRubyPackage
 
     hidden = capture("readelf", "-sW", archive).lines.count { |line| line.match?(/ (GLOBAL|WEAK)\s+HIDDEN /) }
     raise PackageError, "#{archive} still has #{hidden} linkable hidden symbols" unless hidden.zero?
+
+    debug = capture("readelf", "-SW", archive).lines.count { |line| line.include?(".debug_") }
+    raise PackageError, "#{archive} still has #{debug} debug sections" unless debug.zero?
   end
 
   def check_abi!(root)
@@ -1206,8 +1236,8 @@ class PortableRubyPackage
     FileUtils.rm_f(path)
     # Alternate between the primary URL and the mirror, in rounds with a growing pause:
     # curl's own --retry only covers HTTP errors, not a host that is down (the
-    # manylinux2014 curl is too old for --retry-all-errors), and a single upstream
-    # outage should not fail a build.
+    # manylinux image's curl, 7.61, is too old for --retry-all-errors), and a single
+    # upstream outage should not fail a build.
     urls = [recipe["url"], recipe["mirror"]].compact
     attempts = DOWNLOAD_RETRY_DELAYS.flat_map { |delay| urls.map { |url| [url, delay] } }
     attempts.each_with_index do |(url, delay), index|
