@@ -32,8 +32,9 @@ defaults:
   test_native_gem: ~
 series:
   # --- Rubies past their end of life ------------------------------------------------------
-  # Built for local development, not production. Shared settings: OpenSSL 1.0 or 1.1
-  # because their openssl extensions predate OpenSSL 3; -fno-strict-overflow because
+  # Built so old applications keep deploying on current distributions. Shared settings:
+  # OpenSSL 1.0 or 1.1 because their openssl extensions predate OpenSSL 3;
+  # -fno-strict-overflow because
   # their fixnum overflow checks rely on signed overflow wrapping, which GCC exploits from
   # -O2 up (a 1.8.7 built without it evaluates 2**64 to 0); readline through a bundled
   # libedit; no bundled msgpack/bootsnap; a version-appropriate native gem as the test;
