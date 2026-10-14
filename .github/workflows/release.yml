@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      self_hosted:
+        description: 'Build x86_64_linux on the self-hosted runners (arm64 stays on GitHub)'
+        required: false
+        type: boolean
+        default: true
 
 env:
   # Revision releases of a version to keep after publishing a new one: the current build
@@ -119,6 +124,7 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       version: ${{ inputs.version }}
+      self_hosted: ${{ inputs.self_hosted }}
 
   combine-hashes:
     needs: build
