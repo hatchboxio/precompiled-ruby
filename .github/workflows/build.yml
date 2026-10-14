@@ -59,12 +59,17 @@ jobs:
           # (bin/package names it without the .no_yjit suffix).
           if [[ "$YJIT" == "true" ]]; then yjits='[true, false]'; else yjits='[false]'; fi
           if [[ "$SELF_HOSTED" == "true" ]]; then x86='["self-hosted", "linux", "x64"]'; else x86='"ubuntu-22.04"'; fi
-          echo "linux=$(jq -c -n --argjson yjits "$yjits" --argjson x86 "$x86" '{include: [
+          # Each target's pinned manylinux container is resolved here so the build jobs need
+          # no host Ruby: ruby/setup-ruby on self-hosted runners installs into the shared
+          # /opt/hostedtoolcache, and two jobs extracting the same Ruby there at once race.
+          containers=$(ruby -ryaml -rjson -e 'puts YAML.load_file("recipes/targets.yml").fetch("targets").transform_values { |t| t.fetch("container") }.to_json')
+          echo "linux=$(jq -c -n --argjson yjits "$yjits" --argjson x86 "$x86" --argjson containers "$containers" '{include: [
             {runner: $x86,               target: "x86_64_linux"},
             {runner: "ubuntu-22.04-arm", target: "arm64_linux"}
-          ] | map(. as $t | $yjits[] | $t + {yjit: .})}')" >> "$GITHUB_OUTPUT"
+          ] | map(. as $t | $yjits[] | $t + {yjit: ., container: $containers[$t.target]})}')" >> "$GITHUB_OUTPUT"
 
   build-linux:
+    name: build-linux (${{ matrix.target }}, yjit=${{ matrix.yjit }})
     needs: plan
     strategy:
       fail-fast: false
@@ -72,24 +77,13 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: .ruby-version
-
-      - name: Resolve target container
-        id: target
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          container=$(ruby -ryaml -e 'puts YAML.load_file("recipes/targets.yml").fetch("targets").fetch(ENV.fetch("TARGET")).fetch("container")')
-          echo "container=$container" >> "$GITHUB_OUTPUT"
 
       - name: Build portable Ruby in manylinux
         env:
           VERSION: ${{ inputs.version }}
           TARGET: ${{ matrix.target }}
           YJIT: ${{ matrix.yjit }}
-          CONTAINER: ${{ steps.target.outputs.container }}
+          CONTAINER: ${{ matrix.container }}
         run: |
           set -euxo pipefail
           docker pull "$CONTAINER"
@@ -139,9 +133,9 @@ jobs:
       # would fail on those files, so hand them back to the runner user even after a failed
       # build.
       - name: Fix workspace ownership
-        if: always() && steps.target.outputs.container != ''
+        if: always()
         env:
-          CONTAINER: ${{ steps.target.outputs.container }}
+          CONTAINER: ${{ matrix.container }}
         run: docker run --rm -v "$PWD:/work" "$CONTAINER" chown -R "$(id -u):$(id -g)" /work
 
       - name: Upload portable Ruby
