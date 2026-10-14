@@ -6,11 +6,23 @@ on:
       version:
         required: true
         type: string
+      self_hosted:
+        description: Build x86_64_linux on the self-hosted runners instead of GitHub's
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       version:
         required: true
         type: string
+      # The self-hosted runners are x64 Ubuntu VMs at home, so only x86_64_linux can move
+      # there; arm64_linux always builds on GitHub's hosted arm runner. Off by default so
+      # pull requests, which anyone can open on this public repository, never run on them.
+      self_hosted:
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,12 +53,14 @@ jobs:
       - id: matrix
         env:
           YJIT: ${{ steps.info.outputs.yjit }}
+          SELF_HOSTED: ${{ inputs.self_hosted }}
         run: |
           # Both variants per target when the series has YJIT, otherwise one build per target
           # (bin/package names it without the .no_yjit suffix).
           if [[ "$YJIT" == "true" ]]; then yjits='[true, false]'; else yjits='[false]'; fi
-          echo "linux=$(jq -c -n --argjson yjits "$yjits" '{include: [
-            {runner: "ubuntu-22.04",     target: "x86_64_linux"},
+          if [[ "$SELF_HOSTED" == "true" ]]; then x86='["self-hosted", "linux", "x64"]'; else x86='"ubuntu-22.04"'; fi
+          echo "linux=$(jq -c -n --argjson yjits "$yjits" --argjson x86 "$x86" '{include: [
+            {runner: $x86,               target: "x86_64_linux"},
             {runner: "ubuntu-22.04-arm", target: "arm64_linux"}
           ] | map(. as $t | $yjits[] | $t + {yjit: .})}')" >> "$GITHUB_OUTPUT"
 
@@ -118,8 +132,17 @@ jobs:
               fi
 
               bin/package "$VERSION" --target "$TARGET" "$yjit_arg" --output rubies
-              chown -R "$(stat -c %u /work):$(stat -c %g /work)" rubies .build .cache || true
             '
+
+      # The container runs as root, so everything it wrote into the workspace is root-owned.
+      # On a self-hosted runner the workspace outlives the job, and the next checkout's clean
+      # would fail on those files, so hand them back to the runner user even after a failed
+      # build.
+      - name: Fix workspace ownership
+        if: always() && steps.target.outputs.container != ''
+        env:
+          CONTAINER: ${{ steps.target.outputs.container }}
+        run: docker run --rm -v "$PWD:/work" "$CONTAINER" chown -R "$(id -u):$(id -g)" /work
 
       - name: Upload portable Ruby
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

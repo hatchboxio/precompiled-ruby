@@ -29,6 +29,8 @@ jobs:
           ruby -c libexec/validate_recipes.rb
           ruby -c libexec/update_ruby_recipe.rb
 
+  # Stays on GitHub's runners (build.yml's self_hosted defaults to false): a pull request
+  # can come from anyone, and the self-hosted runners are machines at home.
   build:
     needs: syntax
     if: github.event_name == 'pull_request'
