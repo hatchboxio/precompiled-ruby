@@ -102,15 +102,9 @@ jobs:
               # days-old repomd.xml whose files the current mirrors have already pruned (404 on
               # every mirror). Retry once from a fresh cache, then fall back to repo.almalinux.org.
               packages="curl tar gzip xz make gcc gcc-c++ perl perl-IPC-Cmd perl-Time-Piece patch file findutils diffutils which git binutils"
-              if ! yum install -y $packages; then
-                yum clean all
-                sleep 30
-                if ! yum install -y $packages; then
-                  sed -i -e "s|^mirrorlist=|#mirrorlist=|" -e "s|^# *baseurl=|baseurl=|" /etc/yum.repos.d/almalinux*.repo
-                  yum clean all
-                  yum install -y $packages
-                fi
-              fi
+              yum install -y $packages ||
+                { yum clean all; yum install -y $packages; } ||
+                { sed -i -e "s|^mirrorlist=|#mirrorlist=|" -e "s|^# *baseurl=|baseurl=|" /etc/yum.repos.d/almalinux*.repo; yum clean all; yum install -y $packages; }
 
               bootstrap_version="$BOOTSTRAP_VERSION"
               bootstrap_root=".build/bootstrap/${TARGET}-${bootstrap_version}"
