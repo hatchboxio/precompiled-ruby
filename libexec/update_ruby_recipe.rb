@@ -8,6 +8,7 @@ class UpdateRubyRecipeError < StandardError; end
 class UpdateRubyRecipe
   ROOT = File.expand_path("..", __dir__)
   RECIPE_PATH = File.join(ROOT, "recipes", "rubies.yml")
+  SERIES_PATH = File.join(ROOT, "recipes", "series.yml")
   PRE_RELEASE_RANK = {
     "preview" => 0,
     "rc" => 1
@@ -30,6 +31,7 @@ class UpdateRubyRecipe
   end
 
   def run!
+    register_series
     doc = YAML.safe_load(File.read(RECIPE_PATH), permitted_classes: [], aliases: false)
     rubies = doc.fetch("rubies")
     old = rubies[@version]
@@ -45,6 +47,28 @@ class UpdateRubyRecipe
   end
 
   private
+
+  # A new minor (4.2, ...) gets an empty series entry, which takes the defaults; without it
+  # bin/validate-recipes rejects the recipe and autobump stalls on every later run.
+  def register_series
+    series = @version[/\A\d+\.\d+/]
+    doc = YAML.safe_load(File.read(SERIES_PATH), permitted_classes: [], aliases: false)
+    return if doc.fetch("series").key?(series)
+
+    lines = File.read(SERIES_PATH).lines
+    start = lines.index("series:\n") or raise UpdateRubyRecipeError, "recipes/series.yml is missing series map"
+    finish = (start + 1...lines.length).find { |index| lines[index].match?(/\A\S/) } || lines.length
+    keys = (start + 1...finish).filter_map do |index|
+      match = lines[index].match(/\A  "?(\d+\.\d+)"?:/)
+      [index, match[1]] if match
+    end
+    newer = keys.find { |_, key| (key.split(".").map(&:to_i) <=> series.split(".").map(&:to_i)) > 0 }
+    insert_at = newer ? newer.first : finish
+    insert_at -= 1 while !newer && insert_at > start + 1 && lines[insert_at - 1].strip.empty?
+    lines.insert(insert_at, %(  "#{series}": {}\n))
+    File.write(SERIES_PATH, lines.join)
+    puts "Added series #{series} to recipes/series.yml"
+  end
 
   def recipe_entry
     entry = {
