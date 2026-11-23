@@ -1,8 +1,8 @@
 name: Bump bundled gems
 
 # Opens a PR (never pushes to main) bumping the msgpack and bootsnap gems staged into every
-# portable Ruby, so the build jobs, including 3.2 and 3.3 with their own pins, validate the
-# new gems first. Daily is plenty; the Ruby recipe autobump is the one that needs to be quick.
+# portable Ruby, so CI builds the newest Ruby of every series that bundles gems with the new
+# gems first. Daily is plenty; the Ruby recipe autobump is the one that needs to be quick.
 on:
   workflow_dispatch:
   schedule:
@@ -57,6 +57,6 @@ jobs:
             echo
             sed 's/^/- /' <<< "$summary"
             echo
-            echo "Opened by the bundled-gems workflow. CI builds 3.4 plus the 3.2 and 3.3 series, which pin their own gems, to validate them. Existing releases keep their old gems until they are re-released."
+            echo "Opened by the bundled-gems workflow. CI builds the newest Ruby of every series that bundles gems to validate them. Existing releases keep their old gems until they are re-released."
           } > "$RUNNER_TEMP/body.md"
           gh pr create --base main --head "$branch" --title "Bump bundled gems" --body-file "$RUNNER_TEMP/body.md"
