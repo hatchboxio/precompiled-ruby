@@ -81,20 +81,23 @@ class UpdateBundledGems
   def min_ruby(series, section, name)
     return Gem::Version.new("#{section}.0") unless section == "defaults"
 
-    inheriting = series.keys.sort_by { |key| Gem::Version.new(key) }.select do |key|
-      settings = series.fetch(key) || {}
-      next false if settings.key?("bundled_gems") && settings["bundled_gems"].nil?
-
-      settings.dig("bundled_gems", name).nil?
+    inheriting = series.filter_map do |key, settings|
+      gems = (settings || {}).fetch("bundled_gems", {})
+      Gem::Version.new("#{key}.0") if gems && gems[name].nil?
     end
     abort "error: no series uses the default #{name}" if inheriting.empty?
-    Gem::Version.new("#{inheriting.first}.0")
+    inheriting.min
+  end
+
+  # Cached per gem: a gem can have entries for the defaults and for series that pin their own.
+  def releases(name)
+    @releases ||= Hash.new { |cache, gem| cache[gem] = JSON.parse(fetch("https://rubygems.org/api/v1/versions/#{gem}.json")) }
+    @releases[name]
   end
 
   def latest_for(entry)
     major = Gem::Version.new(entry.version).segments.first
-    releases = JSON.parse(fetch("https://rubygems.org/api/v1/versions/#{entry.name}.json"))
-    candidates = releases.select do |release|
+    candidates = releases(entry.name).select do |release|
       next false unless release.fetch("platform") == "ruby" && !release.fetch("prerelease")
 
       Gem::Version.new(release.fetch("number")).segments.first == major &&

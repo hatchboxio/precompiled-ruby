@@ -57,6 +57,6 @@ jobs:
             echo
             sed 's/^/- /' <<< "$summary"
             echo
-            echo "Opened by the bundled-gems workflow. CI builds 3.4.1, 3.2.9 and 3.3.14 to validate the new gems. Existing releases keep their old gems until they are re-released."
+            echo "Opened by the bundled-gems workflow. CI builds 3.4 plus the 3.2 and 3.3 series, which pin their own gems, to validate them. Existing releases keep their old gems until they are re-released."
           } > "$RUNNER_TEMP/body.md"
           gh pr create --base main --head "$branch" --title "Bump bundled gems" --body-file "$RUNNER_TEMP/body.md"
