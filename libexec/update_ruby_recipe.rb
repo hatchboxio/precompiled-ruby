@@ -49,22 +49,19 @@ class UpdateRubyRecipe
   private
 
   # A new minor (4.2, ...) gets an empty series entry, which takes the defaults; without it
-  # bin/validate-recipes rejects the recipe and autobump stalls on every later run.
+  # bin/validate-recipes rejects the recipe and autobump stalls on every later run. The series
+  # map is the last one in the file, so a series newer than all of them goes at the end.
   def register_series
     text = File.read(SERIES_PATH)
     return if YAML.safe_load(text, permitted_classes: [], aliases: false).fetch("series").key?(series)
 
     lines = text.lines
     start = lines.index("series:\n") or raise UpdateRubyRecipeError, "recipes/series.yml is missing series map"
-    finish = (start + 1...lines.length).find { |index| lines[index].match?(/\A\S/) } || lines.length
-    keys = (start + 1...finish).filter_map do |index|
-      match = lines[index].match(/\A  "?(\d+\.\d+)"?:/)
-      [index, match[1]] if match
+    newer = (start + 1...lines.length).find do |index|
+      key = lines[index][/\A  "(\d+\.\d+)":/, 1]
+      key && (version_sort_key(key) <=> version_sort_key(series)) > 0
     end
-    newer = keys.find { |_, key| (version_sort_key(key) <=> version_sort_key(series)) > 0 }
-    insert_at = newer ? newer.first : finish
-    insert_at -= 1 while !newer && insert_at > start + 1 && lines[insert_at - 1].strip.empty?
-    lines.insert(insert_at, %(  "#{series}": {}\n))
+    lines.insert(newer || lines.length, %(  "#{series}": {}\n))
     File.write(SERIES_PATH, lines.join)
     puts "Added series #{series} to recipes/series.yml"
   end
