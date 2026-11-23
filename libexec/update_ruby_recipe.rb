@@ -51,18 +51,17 @@ class UpdateRubyRecipe
   # A new minor (4.2, ...) gets an empty series entry, which takes the defaults; without it
   # bin/validate-recipes rejects the recipe and autobump stalls on every later run.
   def register_series
-    series = @version[/\A\d+\.\d+/]
-    doc = YAML.safe_load(File.read(SERIES_PATH), permitted_classes: [], aliases: false)
-    return if doc.fetch("series").key?(series)
+    text = File.read(SERIES_PATH)
+    return if YAML.safe_load(text, permitted_classes: [], aliases: false).fetch("series").key?(series)
 
-    lines = File.read(SERIES_PATH).lines
+    lines = text.lines
     start = lines.index("series:\n") or raise UpdateRubyRecipeError, "recipes/series.yml is missing series map"
     finish = (start + 1...lines.length).find { |index| lines[index].match?(/\A\S/) } || lines.length
     keys = (start + 1...finish).filter_map do |index|
       match = lines[index].match(/\A  "?(\d+\.\d+)"?:/)
       [index, match[1]] if match
     end
-    newer = keys.find { |_, key| (key.split(".").map(&:to_i) <=> series.split(".").map(&:to_i)) > 0 }
+    newer = keys.find { |_, key| (version_sort_key(key) <=> version_sort_key(series)) > 0 }
     insert_at = newer ? newer.first : finish
     insert_at -= 1 while !newer && insert_at > start + 1 && lines[insert_at - 1].strip.empty?
     lines.insert(insert_at, %(  "#{series}": {}\n))
@@ -70,9 +69,13 @@ class UpdateRubyRecipe
     puts "Added series #{series} to recipes/series.yml"
   end
 
+  def series
+    @version[/\A\d+\.\d+/]
+  end
+
   def recipe_entry
     entry = {
-      "series" => @version[/\A\d+\.\d+/],
+      "series" => series,
       "url" => @url,
       "sha256" => @sha256
     }
