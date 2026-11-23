@@ -1,0 +1,62 @@
+name: Bump bundled gems
+
+# Opens a PR (never pushes to main) bumping the msgpack and bootsnap gems staged into every
+# portable Ruby, so the build jobs, including 3.2 and 3.3 with their own pins, validate the
+# new gems first. Daily is plenty; the Ruby recipe autobump is the one that needs to be quick.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 9 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bundled-gems
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A PR opened with the built-in token would not trigger CI, so the builds that
+          # validate the new gems would never run.
+          token: ${{ secrets.RELEASE_TOKEN }}
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+
+      - name: Bump bundled gems
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch=autobump/bundled-gems
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "A bundled gems bump PR is already open"
+            exit 0
+          fi
+
+          summary=$(bin/update-bundled-gems)
+          echo "$summary"
+          if git diff --quiet -- recipes/series.yml; then
+            exit 0
+          fi
+          bin/validate-recipes
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add recipes/series.yml
+          git commit -m "Bump bundled gems" -m "$summary"
+          git push --force origin "$branch"
+          {
+            echo "Newest stable releases of the gems staged into every portable Ruby, within the same major version and the series' minimum Ruby."
+            echo
+            sed 's/^/- /' <<< "$summary"
+            echo
+            echo "Opened by the bundled-gems workflow. CI builds 3.4.1, 3.2.9 and 3.3.14 to validate the new gems. Existing releases keep their old gems until they are re-released."
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --base main --head "$branch" --title "Bump bundled gems" --body-file "$RUNNER_TEMP/body.md"
