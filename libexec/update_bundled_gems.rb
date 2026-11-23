@@ -4,7 +4,6 @@
 require "digest"
 require "json"
 require "net/http"
-require "rubygems"
 require "yaml"
 
 # Bumps the gems staged into every portable Ruby (recipes/series.yml bundled_gems) to the
@@ -19,7 +18,7 @@ class UpdateBundledGems
   ROOT = File.expand_path("..", __dir__)
   SERIES_PATH = File.join(ROOT, "recipes", "series.yml")
 
-  Entry = Struct.new(:series, :name, :line, :version, :min_ruby, keyword_init: true)
+  Entry = Struct.new(:series, :name, :line, :version, :min_ruby)
 
   def self.run!
     new.run!
@@ -34,22 +33,26 @@ class UpdateBundledGems
       latest = latest_for(entry)
       next if latest.nil? || latest.fetch("number") == entry.version
 
-      url = "https://rubygems.org/downloads/#{entry.name}-#{latest.fetch("number")}.gem"
+      version = latest.fetch("number")
+      url = "https://rubygems.org/downloads/#{entry.name}-#{version}.gem"
       sha256 = Digest::SHA256.hexdigest(fetch(url))
       unless sha256 == latest.fetch("sha")
         abort "error: #{url} sha256 #{sha256} does not match rubygems.org metadata #{latest.fetch("sha")}"
       end
 
       indent = lines[entry.line][/\A\s*/]
-      lines[entry.line] = "#{indent}version: #{latest.fetch("number")}\n"
+      lines[entry.line] = "#{indent}version: #{version}\n"
       lines[entry.line + 1] = "#{indent}url: #{url}\n"
       lines[entry.line + 2] = "#{indent}sha256: #{sha256}\n"
       bumped = true
-      puts "#{entry.name} #{entry.version} -> #{latest.fetch("number")} (#{entry.series})"
+      puts "#{entry.name} #{entry.version} -> #{version} (#{entry.series})"
     end
 
-    File.write(SERIES_PATH, lines.join) if bumped
-    puts "bundled gems are up to date" unless bumped
+    if bumped
+      File.write(SERIES_PATH, lines.join)
+    else
+      puts "bundled gems are up to date"
+    end
   end
 
   private
@@ -91,16 +94,15 @@ class UpdateBundledGems
 
   # Cached per gem: a gem can have entries for the defaults and for series that pin their own.
   def releases(name)
-    @releases ||= Hash.new { |cache, gem| cache[gem] = JSON.parse(fetch("https://rubygems.org/api/v1/versions/#{gem}.json")) }
-    @releases[name]
+    @releases ||= {}
+    @releases[name] ||= JSON.parse(fetch("https://rubygems.org/api/v1/versions/#{name}.json"))
   end
 
   def latest_for(entry)
     major = Gem::Version.new(entry.version).segments.first
     candidates = releases(entry.name).select do |release|
-      next false unless release.fetch("platform") == "ruby" && !release.fetch("prerelease")
-
-      Gem::Version.new(release.fetch("number")).segments.first == major &&
+      release.fetch("platform") == "ruby" && !release.fetch("prerelease") &&
+        Gem::Version.new(release.fetch("number")).segments.first == major &&
         Gem::Requirement.new(*(release["ruby_version"] || ">= 0").split(",").map(&:strip)).satisfied_by?(entry.min_ruby)
     end
     candidates.max_by { |release| Gem::Version.new(release.fetch("number")) }
