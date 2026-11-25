@@ -16,7 +16,7 @@ on:
       version:
         required: true
         type: string
-      # The self-hosted runners are x64 Ubuntu VMs at home, so only x86_64_linux can move
+      # The self-hosted runners are on an x64 Ubuntu box at home, so only x86_64_linux can move
       # there; arm64_linux always builds on GitHub's hosted arm runner. Off by default so
       # pull requests, which anyone can open on this public repository, never run on them.
       self_hosted:
